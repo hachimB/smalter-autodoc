@@ -37,4 +37,5 @@ data/processed/*
 !data/processed/.gitkeep
 
 # Test
-tests/test_files
+tests/test_files/*
+!tests/test_files/.gitkeep
