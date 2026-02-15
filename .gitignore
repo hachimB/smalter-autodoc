@@ -35,3 +35,6 @@ data/uploads/*
 data/processed/*
 !data/uploads/.gitkeep
 !data/processed/.gitkeep
+
+# Test
+tests/test_files
