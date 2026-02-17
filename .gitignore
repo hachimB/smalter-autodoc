@@ -29,3 +29,16 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
+
+# Data
+data/uploads/*
+data/processed/*
+!data/uploads/.gitkeep
+!data/processed/.gitkeep
+
+# Test
+tests/test_files/*
+!tests/test_files/.gitkeep
+
+# Tools
+tools/
