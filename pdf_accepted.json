@@ -1,0 +1,14 @@
+{"document_id":"63abce92-b65c-49b7-bbc6-aaf17707d2ce",
+"status":"PENDING",
+"rejected_at_gate":null,
+"rejection_reason":null,
+"file_type":"PDF_NATIVE_TEXT",
+"quality_score":null,
+"message":"Document accepté, texte extrait avec succès",
+"suggestions":[],
+"metadata":{"pages":1,"has_text":true,"text_length":726,"text_ratio":1.0,
+    "sample_text":"Facture N°1\nVotre nom / société\nAdresse\nCode postal Ville\nSiret : 820 393 293 39294\nN° TVA : FR45242563863\nTél : 0123456789\nNom client\nAdresse\nCode postal Ville\nSiret : 820 393 293 39294\nTél : 0123456",
+    "text_extraction":{"method":"DIRECT","char_count":726,"word_count":120,"text_preview":"Facture N°1\nVotre nom / société\nAdresse\nCode postal Ville\nSiret : 820 393 293 39294\nN° TVA : FR45242563863\nTél : 0123456789\nNom client\nAdresse\nCode postal Ville\nSiret : 820 393 293 39294\nTél : 0123456...",
+    "ocr_quality":null}
+    }
+}

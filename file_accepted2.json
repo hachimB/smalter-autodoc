@@ -1,0 +1,14 @@
+{"document_id":"414c15eb-3262-41dd-b309-bc7b0077530e",
+"status":"PENDING",
+"rejected_at_gate":null,
+"rejection_reason":null,
+"file_type":"PDF_NATIVE_TEXT",
+"quality_score":null,
+"message":"Document accepté, texte extrait avec succès",
+"suggestions":[],
+"metadata":{"pages":3,"has_text":true,"text_length":3538,"text_ratio":0.999,
+    "sample_text":"Architecture\n \nSOA\n \n \n1.\n \nDéfinition\n \nLa\n \nSOA\n \n(Service-Oriented\n \nArchitecture),\n \nou\n \narchitecture\n \norientée\n \nservices,\n \nest\n \nune\n \nfaçon\n \nde\n \nconcevoir\n \nun\n \nsystème\n \ninformatique\n \nc",
+    "text_extraction":{"method":"DIRECT","char_count":3578,"word_count":407,"text_preview":"Architecture\n \nSOA\n \n \n1.\n \nDéfinition\n \nLa\n \nSOA\n \n(Service-Oriented\n \nArchitecture),\n \nou\n \narchitecture\n \norientée\n \nservices,\n \nest\n \nune\n \nfaçon\n \nde\n \nconcevoir\n \nun\n \nsystème\n \ninformatique\n \nc...",
+    "ocr_quality":null}
+}
+}

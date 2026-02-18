@@ -15,7 +15,7 @@ from PIL import Image
 import logging
 from typing import Tuple, Dict, Optional
 from pydantic import BaseModel
-pytesseract.pytesseract.tesseract_cmd = r"C:\Users\22600011\smalter-autodoc\tools\tesseract.exe"
+pytesseract.pytesseract.tesseract_cmd = r"C:\Users\22600011\smalter-autodoc\tools\tesseract\tesseract.exe"
 logger = logging.getLogger(__name__)
 
 # ══════════════════════════════════════════════════════════════════
@@ -28,7 +28,7 @@ class OCRQualityScore(BaseModel):
     confidence: float           # Confiance moyenne Tesseract
     recognition_rate: float     # % caractères reconnus
     text_coherence: float       # Présence mots français
-    threshold: float = 80.0     # Seuil acceptation
+    threshold: float = 70.0     # Seuil acceptation
     passed: bool                # True si >= threshold
 
 class TextExtractionResult(BaseModel):
@@ -63,7 +63,7 @@ class OCREngine:
     def __init__(
         self,
         tesseract_lang: str = "fra",      # Langue OCR (français)
-        min_ocr_confidence: float = 80.0  # Seuil confiance min
+        min_ocr_confidence: float = 70.0  # Seuil confiance min
     ):
         self.tesseract_lang = tesseract_lang
         self.min_ocr_confidence = min_ocr_confidence

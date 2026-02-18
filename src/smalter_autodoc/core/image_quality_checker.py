@@ -8,7 +8,7 @@ Calcule 4 scores:
 4. Orientation (Angle rotation)
 
 Score global = moyenne pondérée
-Seuil acceptation : 75%
+Seuil acceptation : 70%
 """
 
 import cv2
@@ -28,7 +28,7 @@ class QualityScore(BaseModel):
     contrast: float
     resolution: float
     orientation: float
-    threshold: float = 75.0
+    threshold: float = 70.0
     passed: bool
     suggestions: List[str] = []
 

@@ -1,0 +1,16 @@
+{"document_id":"e450fe58-892f-459f-be63-6481e9f5d35f",
+"status":"PENDING",
+"rejected_at_gate":null,
+"rejection_reason":null,
+"file_type":"IMAGE_PURE",
+"quality_score":{"overall":85.86,"sharpness":100.0,"contrast":100.0,"resolution":79.32,
+    "orientation":0.0,"threshold":70.0,"passed":true,"suggestions":[]
+},
+"message":"Document accepté, texte extrait avec succès",
+"suggestions":[],
+"metadata":{"width":2000,"height":2000,"mode":"RGB","format":"JPEG","dpi":[72,72],
+    "text_extraction":{"method":"OCR","char_count":550,"word_count":93,
+    "text_preview":"- LOS\nNVOICE a\nPERSONAL TRAINER\n\nInvoiceto: Invoice from: Invoiceno:\nAshley Marshall Douglas Martin 123456789\nStreet X, City X - 00000 Street X, City X - 00000\n+00 000 000 000 +00 000 000 000 Date: 05...",
+    "ocr_quality":{"overall":76.19,"confidence":72.03,"recognition_rate":94.91,"text_coherence":47.06,"threshold":70.0,"passed":true}}
+}
+}
