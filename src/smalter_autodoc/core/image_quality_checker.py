@@ -71,7 +71,6 @@ class ImageQualityChecker:
             
             # Charger image
             img_cv = cv2.imread(str(image_path))
-            img_pil = Image.open(image_path)
             
             if img_cv is None:
                 logger.error(f"Impossible de charger: {image_path}")
@@ -80,6 +79,9 @@ class ImageQualityChecker:
                     resolution=0.0, orientation=0.0, passed=False,
                     suggestions=["❌ Fichier image corrompu ou illisible"]
                 )
+            
+            with Image.open(image_path) as img_pil:
+                img_pil = img_pil.copy()
             
             # Calculer scores individuels
             resolution_score = self._check_resolution(img_pil)

@@ -31,7 +31,9 @@ class PDFToImageConverter:
         """
         self.default_dpi = default_dpi
         logger.info(f"PDFToImageConverter initialisé (DPI: {default_dpi})")
-    
+
+
+
     def convert_first_page(
         self, 
         pdf_path: str | Path,

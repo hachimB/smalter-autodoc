@@ -147,7 +147,7 @@ class RegexExtractor:
         """
         patterns = [
             # Patterns spécifiques (avec mot-clé)
-            r'\b(?:facture|invoice|fac\.?|n°|no\.?|num[eé]ro|ref|reference|doc|fc)\b\s*[:#.\-/]?\s*([A-Z0-9][A-Z0-9\-/]{2,35})\b',
+            r'\b(?:facture|invoice|fac\.?|n°|no\.?|num[eé]ro|ref|reference)\b\s*[:#.\-/]?\s*([A-Z0-9][\w\-/]{0,35})\b',
             # Patterns structurés typiques
             r'\b([A-Z]{2,6}[-/]?\d{2,6}[-/]?\d{2,8})\b',          # FC24-00123, INV-2025-456
             r'\b\d{4}[/-]\d{2,8}\b',                               # 2024/00123456
@@ -159,9 +159,15 @@ class RegexExtractor:
             m = re.search(pat, text, re.IGNORECASE)
             if m:
                 val = m.group(1).strip()
+                
+                # Validation post-extraction : rejeter si trop générique
+                if val.lower() in ['date', 'total', 'ttc', 'ht', 'tva']:
+                    logger.debug(f"Numéro facture candidat rejeté (mot commun): '{val}'")
+                    continue
+                
                 logger.debug(f"Numéro facture trouvé: {val}")
                 return val
-        
+    
         return None
 
     def _extract_date(self, text: str) -> Optional[str]:
@@ -320,19 +326,13 @@ class RegexExtractor:
         return sorted_rates
 
     def _extract_fournisseur(self, text: str) -> Optional[str]:
-        """
-        Extraction nom fournisseur avec filtrage anti-faux-positifs
-        
-        Stratégie :
-        1. Chercher patterns avec mots-clés
-        2. Sinon, première ligne significative (avec validation stricte)
-        3. Rejeter mots génériques et formats suspects
-        """
+        """Fournisseur"""
         patterns = [
-            # Patterns avec mots-clés explicites
-            r'(?:fournisseur|[eé]metteur|vendeur|soci[ée]t[ée]|raison\s+sociale)\s*[:=]?\s*([^\n\r]{3,80})',
-            # Première ligne (avec validation stricte après)
-            r'^([A-ZÀ-Ý][^\n\r]{5,70})(?:\n|$)',
+            # Pattern avec mot-clé
+            r'(?:fournisseur|[eé]metteur|vendeur|soci[ée]t[ée])\s*[:=]?\s*([^\n\r]{3,80})',
+            
+            # Première ligne (SANS validation préfixe pour test)
+            r'^([^\n\r]{5,70})$',  # ← Simplifié au max
         ]
         
         for pat in patterns:
@@ -342,31 +342,22 @@ class RegexExtractor:
             
             candidate = m.group(1).strip()
             
-            # Validation stricte
-            words = candidate.lower().split()
-            
-            # 1. Rejeter si contient mot générique
-            if any(generic in candidate.lower() for generic in self.GENERIC_COMPANY_WORDS):
-                logger.debug(f"Candidat fournisseur rejeté (mot générique): '{candidate}'")
+            # Rejeter SEULEMENT mots génériques évidents
+            if any(g in candidate.lower() for g in ['facture', 'invoice', 'total']):
                 continue
             
-            # 2. Rejeter si trop court ou que des chiffres
-            if len(candidate) < 3 or candidate.replace(' ', '').isdigit():
+            # Rejeter si que des chiffres
+            if candidate.replace(' ', '').isdigit():
                 continue
             
-            # 3. Accepter si forme juridique présente (forte indication)
-            legal_forms = ['SARL', 'SAS', 'SA ', 'EURL', 'SCI', 'SASU', 'SNC', 'SCOP', 'GIE']
-            has_legal_form = any(form in candidate.upper() for form in legal_forms)
-            
-            # 4. Accepter si >= 2 mots ET pas que des majuscules (évite "FACTURE DE VENTE")
-            is_multi_word = len(words) >= 2
-            not_all_caps = candidate != candidate.upper()
-            
-            if has_legal_form or (is_multi_word and not_all_caps):
-                logger.debug(f"Fournisseur trouvé: '{candidate}'")
+            # Accepter si >= 3 caractères
+            if len(candidate) >= 3:
+                logger.debug(f"Fournisseur: '{candidate}'")
                 return candidate
         
         return None
+    
+
 
     def _extract_iban(self, text: str) -> Optional[str]:
         """
@@ -412,26 +403,32 @@ class RegexExtractor:
             return bic
         
         return None
+    
+
 
     def _extract_solde(self, text: str) -> Optional[float]:
-        """Solde final d'un relevé bancaire"""
+        """Solde final (fix: date entre mot-clé et montant)"""
         patterns = [
-            r'(?:solde\s+(?:final|au|au\s+\d{1,2}[/-]\d{1,2})?|nouveau\s+solde|solde\s+cr[ée]diteur)\s*[:=]?\s*' + self.AMOUNT_PATTERN,
+            r'(?:solde\s+final|nouveau\s+solde|solde\s+cr[ée]diteur|solde\s+au)[\s\S]{0,50}?' + self.AMOUNT_PATTERN,
+            r'solde\s*[:=]?\s*' + self.AMOUNT_PATTERN,
         ]
         
         amounts = []
         for pat in patterns:
             for m in re.finditer(pat, text, re.IGNORECASE):
-                amt = self._parse_amount(m.group(1))
+                amount_str = m.group(m.lastindex) if m.lastindex else m.group(1)
+                amt = self._parse_amount(amount_str)
                 if amt is not None:
                     amounts.append(amt)
         
         if amounts:
-            value = max(amounts)
+            value = amounts[-1]
             logger.debug(f"Solde final trouvé: {value}€")
             return value
         
         return None
+
+
 
     def _extract_siret(self, text: str) -> Optional[str]:
         """

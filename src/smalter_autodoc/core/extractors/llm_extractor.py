@@ -42,19 +42,26 @@ class LLMExtractor:
     
     # Champs qu'on NE confie JAMAIS au LLM
     # (trop critiques, risque d'hallucination)
-    NUMERIC_PROTECTED_FIELDS = {
-        "montant_ttc", "montant_ht", "tva_rates",
-        "siret", "siren", "iban", "bic",
-        "solde_initial", "solde_final",
-        "numero_facture",  # Ajouté (pattern trop structuré pour LLM)
-        "date_facture",    # Ajouté (format ISO strict)
+    
+
+    HARD_PROTECTED_FIELDS = {
+        "montant_ttc", "montant_ht", "tva_rates",  # Montants = critique
+        "siret", "siren", "iban", "bic",           # ID = critique
+        "solde_initial", "solde_final",            # Banque = critique
     }
+
+    SOFT_PROTECTED_FIELDS = {
+        "numero_facture",  # Préférence Regex, mais LLM si échec
+        "date_facture",    # Préférence Regex, mais LLM si échec
+    }
+
+
     
     def __init__(
         self,
         ollama_url: str = "http://localhost:11434",
-        model: str = "mistral",
-        timeout: int = 30
+        model: str = "mistral:7b-instruct-q4_0",
+        timeout: int = 180
     ):
         """
         Args:
@@ -97,42 +104,48 @@ class LLMExtractor:
         self,
         text: str,
         missing_fields: List[str],
-        document_type: str
+        document_type: str,
+        field_hints: Dict[str, str] = None,
+        allow_soft_protected: bool = True  # ← NOUVEAU
     ) -> Dict[str, Any]:
         """
-        Extrait les champs manquants via LLM
-        
         Args:
-            text: Texte brut du document (OCR)
-            missing_fields: Champs non trouvés par Regex
-            document_type: "FACTURE", "RELEVE_BANCAIRE", "TICKET_Z"
-            
-        Returns:
-            Dict avec champs extraits par LLM (seulement les non-numériques)
+            allow_soft_protected: Si True, LLM peut extraire numero_facture/date
+                                  en dernier recours (si Regex a échoué)
         """
         
-        # ══════════════════════════════════════════════
-        # FILTRER : Exclure champs numériques protégés
-        # ══════════════════════════════════════════════
+        # Filtrer les champs
+        fields_to_extract = []
         
-        # Retirer champs internes (commencent par _) et champs protégés
-        fields_to_extract = [
-            f for f in missing_fields
-            if not f.startswith('_')
-            and f not in self.NUMERIC_PROTECTED_FIELDS
-        ]
+        for field in missing_fields:
+            # Ignorer champs internes
+            if field.startswith('_'):
+                continue
+            
+            # Bloquer champs HARD (jamais LLM)
+            if field in self.HARD_PROTECTED_FIELDS:
+                logger.debug(f"Champ {field} protégé (HARD), LLM skip")
+                continue
+            
+            # Bloquer champs SOFT sauf si autorisé
+            if field in self.SOFT_PROTECTED_FIELDS and not allow_soft_protected:
+                logger.debug(f"Champ {field} protégé (SOFT), LLM skip")
+                continue
+            
+            fields_to_extract.append(field)
         
         if not fields_to_extract:
-            logger.info("Aucun champ éligible pour LLM (tous numériques ou déjà trouvés)")
+            logger.info("Aucun champ éligible pour LLM")
             return {}
         
         logger.info(f"LLM va extraire : {fields_to_extract}")
         
-        # ══════════════════════════════════════════════
-        # CONSTRUIRE LE PROMPT
-        # ══════════════════════════════════════════════
-        
-        prompt = self._build_prompt(text, fields_to_extract, document_type)
+        prompt = self._build_prompt(
+            text, 
+            fields_to_extract, 
+            document_type,
+            field_hints or {}  # ← Passer au prompt
+        )
         
         # ══════════════════════════════════════════════
         # APPELER OLLAMA
@@ -162,88 +175,50 @@ class LLMExtractor:
             logger.error(f"Erreur LLM : {str(e)}", exc_info=True)
             return {}  # Échec silencieux → Regex seul suffit
     
+
+
     def _build_prompt(
         self,
         text: str,
         fields: List[str],
-        document_type: str
+        document_type: str,
+        field_hints: Dict[str, str]
     ) -> str:
-        """
-        Construit un prompt précis et minimaliste
+        """Prompt minimaliste pour réduire temps génération"""
         
-        Principes :
-        - Demander SEULEMENT les champs nécessaires
-        - Forcer réponse JSON stricte
-        - Interdire invention de données
-        - Exemples concrets pour chaque type de champ
-        """
+        # Tronquer agressivement
+        text_truncated = text[:1500] if len(text) > 1500 else text
         
-        # Descriptions des champs pour guider le LLM
-        field_descriptions = {
-            "fournisseur": "nom complet de l'entreprise émettrice (ex: 'Carrefour Market SARL')",
-            "adresse_fournisseur": "adresse complète de l'émetteur (rue, code postal, ville)",
-            "client": "nom de l'entreprise destinataire",
-            "adresse_client": "adresse complète du destinataire",
-            "lignes_articles": "liste des produits/services (description, quantité, prix unitaire si présents)",
-            "conditions_paiement": "conditions ou délai de paiement mentionné (ex: '30 jours fin de mois', 'paiement comptant')",
-            "libelle": "description de l'opération bancaire",
-        }
+        # Liste champs SANS descriptions (plus court)
+        fields_str = ", ".join([f'"{f}"' for f in fields])
         
-        # Construire la liste des champs demandés avec descriptions
-        fields_list = "\n".join([
-            f'- "{field}": {field_descriptions.get(field, field)}'
-            for field in fields
-        ])
+        # Prompt ultra-court
+        prompt = f"""Extrais ces champs en JSON strict (null si absent):
+    Champs: {fields_str}
+
+    Texte:
+    {text_truncated}
+
+    JSON:"""
         
-        # Tronquer le texte si trop long (éviter overflow context window)
-        # Mistral 7B context = 8k tokens ≈ 32k caractères
-        text_truncated = text[:4000] if len(text) > 4000 else text
-        
-        prompt = f"""Tu es un assistant d'extraction de données pour documents comptables français.
-
-Type de document : {document_type}
-
-TEXTE DU DOCUMENT :
----
-{text_truncated}
----
-
-TÂCHE : Extrais UNIQUEMENT les champs suivants depuis le texte ci-dessus :
-{fields_list}
-
-RÈGLES STRICTES :
-1. Réponds UNIQUEMENT avec un objet JSON valide, rien d'autre
-2. Si un champ est absent du texte, mets null (pas d'invention)
-3. Ne reformule pas, copie les valeurs exactes du texte
-4. Pour les adresses : inclure rue, code postal et ville si présents
-5. Pour les conditions de paiement : copier exactement la phrase mentionnée
-6. Pas de commentaires, pas d'explication, juste le JSON
-
-FORMAT RÉPONSE ATTENDU :
-{{"field1": "valeur1", "field2": "valeur2", "field3": null}}
-
-RÉPONSE JSON :"""
+        logger.debug(f"Prompt généré ({len(prompt)} chars)")
         
         return prompt
     
+
+
+    
     def _call_ollama(self, prompt: str) -> Optional[str]:
-        """
-        Appelle l'API Ollama en local
-        
-        Endpoint : POST /api/generate
-        
-        Returns:
-            Texte brut de la réponse du LLM
-        """
+        """Appelle Ollama (fix: meilleur logging + gestion erreurs)"""
         
         payload = {
             "model": self.model,
             "prompt": prompt,
-            "stream": False,    # Réponse complète d'un coup (pas de streaming)
+            "stream": False,
             "options": {
-                "temperature": 0.1,   # Peu créatif = plus précis
+                "temperature": 0.1,
                 "top_p": 0.9,
-                "num_predict": 500,   # Max tokens générés
+                "num_predict": 200,  # ← Max token (plus rapide)
             }
         }
         
@@ -256,22 +231,63 @@ RÉPONSE JSON :"""
                 timeout=self.timeout
             )
             
-            response.raise_for_status()
+            # ══════════════════════════════════════════════
+            # VÉRIFIER STATUS HTTP
+            # ══════════════════════════════════════════════
+            
+            if response.status_code != 200:
+                logger.error(
+                    f"Ollama HTTP {response.status_code}: {response.text[:200]}"
+                )
+                return None
+            
+            # ══════════════════════════════════════════════
+            # PARSER RÉPONSE JSON
+            # ══════════════════════════════════════════════
             
             data = response.json()
-            llm_response = data.get("response", "")
             
-            logger.debug(f"LLM réponse ({len(llm_response)} chars): {llm_response[:200]}...")
+            # Vérifier erreur dans la réponse JSON
+            if "error" in data:
+                logger.error(f"Ollama erreur API: {data['error']}")
+                return None
+            
+            # Extraire le texte généré
+            llm_response = data.get("response")
+            
+            if llm_response is None:
+                logger.error(f"Clé 'response' absente. Data reçu: {data}")
+                return None
+            
+            if not llm_response.strip():
+                logger.warning("Ollama a retourné une chaîne vide")
+                return None
+            
+            # ══════════════════════════════════════════════
+            # SUCCÈS - LOGGER LA RÉPONSE
+            # ══════════════════════════════════════════════
+            
+            logger.info(
+                f"✅ LLM réponse reçue ({len(llm_response)} chars): "
+                f"{llm_response[:100]}..."
+            )
             
             return llm_response
             
         except requests.exceptions.Timeout:
             logger.error(f"Timeout Ollama après {self.timeout}s")
             return None
+        
         except requests.exceptions.RequestException as e:
-            logger.error(f"Erreur requête Ollama: {e}")
+            logger.error(f"Erreur HTTP Ollama: {e}")
+            return None
+        
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON invalide d'Ollama: {e}")
             return None
     
+
+
     def _parse_json_response(self, raw: str) -> Dict[str, Any]:
         """
         Parse la réponse du LLM en JSON propre

@@ -1,4 +1,3 @@
-# src/smalter_autodoc/core/extractors/hybrid_extractor.py
 """
 Orchestrateur Hybride : Combine Regex + LLM
 
@@ -52,7 +51,7 @@ class HybridExtractor:
             f"(LLM: {'activé' if use_llm else 'désactivé'})"
         )
     
-    def extract(self, text: str, document_type: str) -> Dict[str, Any]:
+    def extract(self, text: str, document_type: str, field_hints: Dict[str, str] = None) -> Dict[str, Any]:
         """
         Extraction complète : Regex → LLM si nécessaire → Merge
         
@@ -84,6 +83,8 @@ class HybridExtractor:
             }
         
         missing = regex_result.get("_missing_fields", [])
+
+
         
         logger.info(
             f"Phase 1 terminée : "
@@ -114,7 +115,7 @@ class HybridExtractor:
                 logger.info("Phase 2 : Extraction LLM...")
                 
                 try:
-                    llm_result = self.llm.extract(text, missing, document_type)
+                    llm_result = self.llm.extract(text, missing, document_type, field_hints=field_hints)
                     
                     if llm_result:
                         logger.info(
