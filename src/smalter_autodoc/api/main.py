@@ -14,6 +14,8 @@ from src.smalter_autodoc.core.pdf_to_image_converter import PDFToImageConverter
 from src.smalter_autodoc.core.ocr_engine import OCREngine
 from src.smalter_autodoc.core.document_router import DocumentRouter
 from src.smalter_autodoc.core.agents.base_agent import ProcessingResult
+from src.smalter_autodoc.core.document_type_validator import DocumentTypeValidator
+
 
 # Setup logging
 logging.basicConfig(
@@ -40,6 +42,11 @@ ocr_engine = OCREngine(tesseract_lang="fra", min_ocr_confidence=70.0)
 
 
 document_router = DocumentRouter(use_llm=True)
+
+
+document_type_validator = DocumentTypeValidator()
+
+
 
 
 
@@ -266,6 +273,40 @@ async def upload_document(file: UploadFile = File(...), document_type: str = For
             )
         
 
+        # ══════════════════════════════════════════════════════
+        # PORTE 3 : Validation Type Document (NOUVEAU)
+        # ══════════════════════════════════════════════════════
+    
+        logger.info(f"Document {document_id}: 🚪 PORTE 3A - Validation type document")
+        
+        type_validation = document_type_validator.validate(
+            text_extraction_result.text,
+            document_type
+        )
+        
+        if not type_validation["valid"]:
+            # Nettoyage
+            temp_path.unlink()
+            if image_to_check and image_to_check != temp_path:
+                image_to_check.unlink()
+            
+            return UploadResponse(
+                document_id=document_id,
+                status=ProcessingStatus.REJECTED,
+                rejected_at_gate=3,
+                rejection_reason="TYPE_MISMATCH",
+                file_type=file_type,
+                message=type_validation["reason"],
+                suggestions=[
+                    f"Type détecté : {type_validation['detected_type']}",
+                    f"Type déclaré : {type_validation['declared_type']}",
+                    "Vérifiez le type de document avant de le soumettre à nouveau"
+                ],
+                metadata={
+                    **file_metadata,
+                    "type_validation": type_validation
+                }
+            )
         # ══════════════════════════════════════════════════════
         # 6. PORTE 3 : Sélection Agent ← NOUVEAU
         # ══════════════════════════════════════════════════════

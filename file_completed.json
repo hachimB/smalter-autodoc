@@ -1,1 +1,27 @@
-{"document_id":"1de17560-31b9-4062-aad1-211f57939fdc","status":"REJECTED","rejected_at_gate":5,"rejection_reason":"VALIDATION_FAILED","file_type":"IMAGE_PURE","quality_score":{"overall":85.86,"sharpness":100.0,"contrast":100.0,"resolution":79.32,"orientation":0.0,"threshold":70.0,"passed":true,"suggestions":[]},"message":"Validation échouée : champs obligatoires manquants","suggestions":["Champs obligatoires manquants : montant_ttc","Champ optionnel manquant : siret (non bloquant mais recommandé)","Champ optionnel manquant : montant_ht (non bloquant mais recommandé)","Champ optionnel manquant : tva_rates (non bloquant mais recommandé)","Champ optionnel manquant : adresse_fournisseur (non bloquant mais recommandé)","Champ optionnel manquant : conditions_paiement (non bloquant mais recommandé)"],"metadata":{"width":2000,"height":2000,"mode":"RGB","format":"JPEG","dpi":[72,72],"agent":{"name":"InvoiceAgent","confidence":57.5},"extracted_data":{"numero_facture":"from","date_facture":"2024-08-05","fournisseur":"- LOS","_missing_fields":["montant_ttc","montant_ht","tva_rates","siret","adresse_fournisseur","lignes_articles","conditions_paiement"],"_extraction_method":"REGEX"}}}
+{
+
+    "document_id":"c652f535-73b7-4149-826c-e71b58e4aa98",
+    "status":"REJECTED",
+    "rejected_at_gate":5,
+    "rejection_reason":"VALIDATION_FAILED",
+    "file_type":"IMAGE_PURE",
+    "quality_score":{"overall":85.86,"sharpness":100.0,"contrast":100.0,"resolution":79.32,"orientation":0.0,"threshold":70.0,"passed":true,"suggestions":[]},
+    "message":"Validation échouée : champs obligatoires manquants",
+    "suggestions":["Champs obligatoires manquants : montant_ttc","Champ optionnel manquant : siret (non bloquant mais recommandé)",
+            "Champ optionnel manquant : montant_ht (non bloquant mais recommandé)","Champ optionnel manquant : tva_rates (non bloquant mais recommandé)"],
+    "metadata":{"width":2000,"height":2000,"mode":"RGB","format":"JPEG","dpi":[72,72],"agent":{"name":"InvoiceAgent","confidence":64.5}, 
+            "extracted_data":{"adresse_fournisseur":"Ashley Marshall Douglas Martin 123456789",
+                "lignes_articles":[
+                {"nom":"Personalized Training Program","prix":"$30"},{"nom":"Initial Fitness Assessment","prix":"$40"},
+                {"nom":"Nutritional Guidance","prix":"$20"},{"nom":"Motivation and Support","prix":"$60"}
+                ],
+                "conditions_paiement":"Bank account, $155",
+                "numero_facture":"from",
+                "date_facture":"2024-08-05",
+                "fournisseur":"- LOS",
+                "_missing_fields":["montant_ttc","montant_ht","tva_rates","siret"],
+                "_extraction_method":"HYBRID"
+                }
+    }
+
+}
