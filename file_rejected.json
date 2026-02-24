@@ -1,3 +1,4 @@
+
 {"document_id":"e2e4a464-df1a-4920-a2d7-eba433fa9f78",
 "status":"REJECTED",
 "rejected_at_gate":1,
@@ -9,5 +10,7 @@
 },
 "message":"Qualité image insuffisante: 61.66%",
 "suggestions":["🔍 Résolution trop faible. Recommandations: Scanner à 300 DPI minimum, ou photographier de plus près.","🔄 Document mal orienté. Recommandations: Redressez le document avant photo/scan."],
-"metadata":{"width":541,"height":816,"mode":"RGBA","format":"PNG","dpi":[95.9866,95.9866]}
+"metadata":{"width":541,"height":816,"mode":"RGBA","format":"PNG","dpi":[95.9866,95.9866]}, 
+
+"test": "Cette information ne fait pas partie de la reponse generée"
 }
