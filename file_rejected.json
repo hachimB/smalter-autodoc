@@ -10,7 +10,5 @@
 },
 "message":"Qualité image insuffisante: 61.66%",
 "suggestions":["🔍 Résolution trop faible. Recommandations: Scanner à 300 DPI minimum, ou photographier de plus près.","🔄 Document mal orienté. Recommandations: Redressez le document avant photo/scan."],
-"metadata":{"width":541,"height":816,"mode":"RGBA","format":"PNG","dpi":[95.9866,95.9866]}, 
-
-"test": "Cette information ne fait pas partie de la reponse generée"
+"metadata":{"width":541,"height":816,"mode":"RGBA","format":"PNG","dpi":[95.9866,95.9866]}
 }
