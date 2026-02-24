@@ -1,0 +1,13 @@
+{"document_id":"e2e4a464-df1a-4920-a2d7-eba433fa9f78",
+"status":"REJECTED",
+"rejected_at_gate":1,
+"rejection_reason":"IMAGE_QUALITY_LOW",
+"file_type":"IMAGE_PURE",
+"quality_score":{"overall":61.66,"sharpness":100.0,"contrast":61.29,"resolution":16.35,
+    "orientation":0.0,"threshold":70.0,"passed":false,
+    "suggestions":["🔍 Résolution trop faible. Recommandations: Scanner à 300 DPI minimum, ou photographier de plus près.","🔄 Document mal orienté. Recommandations: Redressez le document avant photo/scan."]
+},
+"message":"Qualité image insuffisante: 61.66%",
+"suggestions":["🔍 Résolution trop faible. Recommandations: Scanner à 300 DPI minimum, ou photographier de plus près.","🔄 Document mal orienté. Recommandations: Redressez le document avant photo/scan."],
+"metadata":{"width":541,"height":816,"mode":"RGBA","format":"PNG","dpi":[95.9866,95.9866]}
+}

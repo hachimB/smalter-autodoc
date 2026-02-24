@@ -4,7 +4,7 @@ from enum import Enum
 
 class ProcessingStatus(str, Enum):
     PENDING = "PENDING"
-    ACCEPTED = "ACCEPTED"
+    COMPLETED = "COMPLETED"
     REJECTED = "REJECTED"
 
 class UploadResponse(BaseModel):
