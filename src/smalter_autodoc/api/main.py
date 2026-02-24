@@ -27,6 +27,8 @@ app = FastAPI(
     description="Système OCR avec validation stricte"
 )
 
+
+
 # Initialize components
 file_detector = FileTypeDetector()
 
