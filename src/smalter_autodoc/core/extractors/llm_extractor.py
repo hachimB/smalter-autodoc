@@ -184,27 +184,27 @@ class LLMExtractor:
         document_type: str,
         field_hints: Dict[str, str]
     ) -> str:
-        """Prompt minimaliste pour réduire temps génération"""
+        """Prompt avec contrainte JSON PLAT"""
         
-        # Tronquer agressivement
         text_truncated = text[:1500] if len(text) > 1500 else text
-        
-        # Liste champs SANS descriptions (plus court)
         fields_str = ", ".join([f'"{f}"' for f in fields])
         
-        # Prompt ultra-court
-        prompt = f"""Extrais ces champs en JSON strict (null si absent):
+        prompt = f"""Extrais ces champs en JSON PLAT (valeurs string uniquement):
     Champs: {fields_str}
+
+    Règles STRICTES:
+    - Format: {{"champ": "valeur"}}
+    - PAS d'objets imbriqués
+    - PAS de tableaux complexes
+    - null si absent
 
     Texte:
     {text_truncated}
 
     JSON:"""
         
-        logger.debug(f"Prompt généré ({len(prompt)} chars)")
-        
         return prompt
-    
+        
 
 
     
@@ -289,61 +289,53 @@ class LLMExtractor:
 
 
     def _parse_json_response(self, raw: str) -> Dict[str, Any]:
-        """
-        Parse la réponse du LLM en JSON propre
+        """Parse JSON avec fallback sur erreur"""
         
-        Gère les cas où le LLM ajoute du texte autour du JSON
-        
-        Args:
-            raw: Réponse brute du LLM
-            
-        Returns:
-            Dict Python avec les données extraites
-        """
-        
-        # ══════════════════════════════════════════════
-        # Chercher bloc JSON dans la réponse
-        # ══════════════════════════════════════════════
-        # (LLM ajoute parfois du texte avant/après)
-        
-        # Pattern pour trouver un objet JSON
+        # Chercher JSON
         json_match = re.search(r'\{.*\}', raw, re.DOTALL)
         
         if not json_match:
-            logger.warning(f"Pas de JSON trouvé dans réponse LLM: {raw[:200]}")
+            logger.warning(f"Pas de JSON: {raw[:200]}")
             return {}
         
         json_str = json_match.group(0)
         
-        # ══════════════════════════════════════════════
-        # Parser le JSON
-        # ══════════════════════════════════════════════
-        
         try:
             result = json.loads(json_str)
             
-            # Validation : doit être un dict
             if not isinstance(result, dict):
-                logger.warning(f"LLM a retourné {type(result)} au lieu de dict")
                 return {}
             
-            # ══════════════════════════════════════════
-            # Nettoyer : supprimer valeurs null/vides
-            # ══════════════════════════════════════════
+            # ══════════════════════════════════════════════
+            # APLATIR structures imbriquées (FIX)
+            # ══════════════════════════════════════════════
             
+            flattened = {}
+            
+            for key, value in result.items():
+                # Si valeur est un dict → convertir en string
+                if isinstance(value, dict):
+                    logger.debug(f"Aplatissement de '{key}': {value}")
+                    # Ex: {"street": "X", "city": "Y"} → "X, Y"
+                    value = ", ".join([str(v) for v in value.values() if v])
+                
+                # Si valeur est une liste d'objets → convertir
+                elif isinstance(value, list) and value and isinstance(value[0], dict):
+                    logger.debug(f"Simplification liste '{key}'")
+                    # Garder tel quel mais logger
+                
+                flattened[key] = value
+            
+            # Nettoyer null/vides
             cleaned = {
-                k: v for k, v in result.items()
-                if v is not None 
-                and v != "" 
-                and v != [] 
-                and v != {}
+                k: v for k, v in flattened.items()
+                if v not in [None, "", [], {}]
             }
             
-            logger.debug(f"JSON parsé avec succès: {list(cleaned.keys())}")
-            
+            logger.debug(f"JSON parsé: {list(cleaned.keys())}")
             return cleaned
             
         except json.JSONDecodeError as e:
-            logger.warning(f"JSON invalide du LLM: {e}")
-            logger.debug(f"JSON problématique: {json_str[:500]}")
+            logger.warning(f"JSON invalide: {e}")
+            logger.debug(f"JSON brut: {json_str[:500]}")
             return {}

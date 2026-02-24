@@ -1,5 +1,5 @@
 # tests/unit/test_regex_extractor_complete.py
-""" 
+"""
 Tests unitaires complets pour RegexExtractor
 Couvre tous les cas limites et erreurs OCR
 """
@@ -85,7 +85,7 @@ class TestRegexExtractor:
     def test_validate_siret_luhn_invalid(self, extractor):
         """SIRET invalide (dernier chiffre modifié)"""
         assert extractor._validate_siret_luhn("73282932000075") == False
-
+    
     def test_extract_siret_with_spaces(self, extractor):
         """SIRET avec espaces : 732 829 320 00074"""
         text = "SIRET : 732 829 320 00074"

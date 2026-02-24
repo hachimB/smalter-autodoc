@@ -32,7 +32,7 @@ class RegexExtractor:
 
 
     # Pattern montant ultra-robuste (négatif, devises multiples, formats FR/EN/CH)
-    AMOUNT_PATTERN = r'(?:(?:[\-−])?\s*(?:[€$£]|USD|EUR|CHF|FCFA|XOF)?\s*)?(\d{1,3}(?:[\s\.,\']?\d{3})*[.,]\d{1,2})\b'
+    AMOUNT_PATTERN = r'(?:(?:[\-−])?\s*(?:[€$£]|USD|EUR|CHF|FCFA|XOF|MAD)?\s*)?(\d{1,3}(?:[\s\.,\']?\d{3})*[.,]\d{1,2})\b'
     
     # Mots génériques à exclure pour extraction fournisseur
     GENERIC_COMPANY_WORDS = {
@@ -141,18 +141,27 @@ class RegexExtractor:
 
     def _extract_invoice_number(self, text: str) -> Optional[str]:
         """
-        Numéro de facture — très fréquent en 2025–2026
+        Extraction numéro facture (fix complet)
         
-        Priorité : patterns avec mots-clés > patterns génériques
+        Gère :
+        - Numéros avec points : S-3.00000003
+        - Numéros avec tirets : FC-2024-001
+        - Numéros alphanumériques : INV2024001
+        - Numéros purement numériques : 20240001
         """
+        
         patterns = [
-            # Patterns spécifiques (avec mot-clé)
-            r'\b(?:facture|invoice|fac\.?|n°|no\.?|num[eé]ro|ref|reference)\b\s*[:#.\-/]?\s*([A-Z0-9][\w\-/]{0,35})\b',
-            # Patterns structurés typiques
-            r'\b([A-Z]{2,6}[-/]?\d{2,6}[-/]?\d{2,8})\b',          # FC24-00123, INV-2025-456
-            r'\b\d{4}[/-]\d{2,8}\b',                               # 2024/00123456
-            # Pattern générique (dernier recours)
-            r'\b(\d{8,14})\b',                                     # 00000123456789 (8-14 chiffres)
+            # Pattern 1 : Avec mot-clé + numéro complexe (points/tirets acceptés)
+            r'(?:facture|invoice|fac\.?|n°|no\.?|num[eé]ro)\s*[:#]?\s*([A-Z0-9]+(?:[\.\-/][A-Z0-9]+)*)',
+            
+            # Pattern 2 : Format structuré sans mot-clé
+            r'\b([A-Z]{1,6}[-/.]\d+(?:[-.]\d+)*)\b',  # S-3.00000003
+            
+            # Pattern 3 : Alphanumérique classique
+            r'\b([A-Z]{2,6}[-/]?\d{2,8})\b',          # FC-2024-001
+            
+            # Pattern 4 : Numérique pur (dernier recours)
+            r'\b(\d{8,14})\b',
         ]
         
         for pat in patterns:
@@ -160,14 +169,22 @@ class RegexExtractor:
             if m:
                 val = m.group(1).strip()
                 
-                # Validation post-extraction : rejeter si trop générique
-                if val.lower() in ['date', 'total', 'ttc', 'ht', 'tva']:
-                    logger.debug(f"Numéro facture candidat rejeté (mot commun): '{val}'")
+                # Validation post-extraction
+                
+                # 1. Rejeter mots communs
+                if val.lower() in ['date', 'total', 'ttc', 'ht', 'tva', 'client', 'page', 'n']:
+                    logger.debug(f"Numéro facture rejeté (mot commun): '{val}'")
                     continue
                 
-                logger.debug(f"Numéro facture trouvé: {val}")
+                # 2. Rejeter si trop court (< 2 caractères)
+                if len(val) < 2:
+                    logger.debug(f"Numéro facture rejeté (trop court): '{val}'")
+                    continue
+                
+                # 3. Accepter si >= 2 caractères et non-commun
+                logger.debug(f"✅ Numéro facture: {val}")
                 return val
-    
+        
         return None
 
     def _extract_date(self, text: str) -> Optional[str]:
@@ -257,51 +274,58 @@ class RegexExtractor:
         return None
 
     def _extract_ttc(self, text: str) -> Optional[float]:
-        """
-        Montant TTC — priorité aux mots-clés forts
+        """Fix: gérer tableaux multi-colonnes"""
         
-        Stratégie : Chercher patterns spécifiques puis prendre le montant le plus élevé
-        (le TTC est généralement le total final)
-        """
         patterns = [
-            # Patterns très spécifiques (priorité haute)
-            r'(?:net\s+[àa]\s+payer|à\s+r[ée]gle?r|solde\s+[àa]\s+payer)\s*[:=]?\s*' + self.AMOUNT_PATTERN,
+            # Pattern explicite avec "TTC"
             r'(?:total\s+)?ttc\s*[:=]?\s*' + self.AMOUNT_PATTERN,
-            # Patterns moyennement spécifiques
-            r'total\s+(?:g[eé]n[eé]ral|facture|à\s+payer)?\s*[:=]?\s*' + self.AMOUNT_PATTERN,
-            # Pattern générique (dernier recours)
-            r'\btotal\s*[:=]?\s*' + self.AMOUNT_PATTERN,
+            r'(?:net\s+[àa]\s+payer|à\s+régler)\s*[:=]?\s*' + self.AMOUNT_PATTERN,
+            
+            # Pattern tableau : "Total" suivi de 2 montants (prendre le 2ème)
+            r'total\s+(?:g[ée]n[ée]ral)?\s*' + self.AMOUNT_PATTERN + r'\s+' + self.AMOUNT_PATTERN,
+            
+            # Somme à payer
+            r'somme\s+[àa]\s+payer\s*[:=]?\s*' + self.AMOUNT_PATTERN,
         ]
-
+        
         amounts = []
         for pat in patterns:
-            for m in re.finditer(pat, text, re.IGNORECASE):
-                amt = self._parse_amount(m.group(1))
+            matches = list(re.finditer(pat, text, re.IGNORECASE))
+            for m in matches:
+                # Si 2 groupes capturés (tableau), prendre le 2ème
+                if m.lastindex and m.lastindex >= 2:
+                    amt = self._parse_amount(m.group(m.lastindex))
+                else:
+                    amt = self._parse_amount(m.group(1))
+                
                 if amt is not None and amt != 0:
                     amounts.append(amt)
-
+        
         if amounts:
-            # Prendre le plus élevé (TTC = total final)
+            # Prendre le plus élevé (TTC > HT)
             value = max(amounts)
-            logger.debug(f"Montant TTC trouvé: {value}€ (parmi {len(amounts)} candidats)")
+            logger.debug(f"TTC: {value}€")
             return value
         
         return None
 
     def _extract_ht(self, text: str) -> Optional[float]:
-        """Montant HT (Hors Taxes)"""
+        """Fix: gérer tableaux multi-colonnes"""
+        
         patterns = [
+            # Explicite avec "HT"
             r'(?:total\s+)?(?:h\.?t\.?|hors\s+taxes?)\s*[:=]?\s*' + self.AMOUNT_PATTERN,
-            r'montant\s+hors\s+taxes?\s*[:=]?\s*' + self.AMOUNT_PATTERN,
-            r'\bht\b\s*[:=]?\s*' + self.AMOUNT_PATTERN,
+            
+            # Tableau : "Total" + 1er montant
+            r'total\s+(?:g[ée]n[ée]ral)?\s*' + self.AMOUNT_PATTERN,
         ]
         
         for pat in patterns:
             m = re.search(pat, text, re.IGNORECASE)
             if m:
                 amt = self._parse_amount(m.group(1))
-                if amt is not None:
-                    logger.debug(f"Montant HT trouvé: {amt}€")
+                if amt:
+                    logger.debug(f"HT: {amt}€")
                     return amt
         
         return None
@@ -326,37 +350,46 @@ class RegexExtractor:
         return sorted_rates
 
     def _extract_fournisseur(self, text: str) -> Optional[str]:
-        """Fournisseur"""
+        """Fix: chercher après logo/header, éviter metadata"""
+        
+        # Nettoyer le texte d'abord (supprimer metadata page)
+        text_clean = re.sub(r'Page\s+\d+/\d+', '', text, flags=re.IGNORECASE)
+        text_clean = re.sub(r'Facture\s+n°.*', '', text_clean, flags=re.IGNORECASE)
+        
         patterns = [
             # Pattern avec mot-clé
-            r'(?:fournisseur|[eé]metteur|vendeur|soci[ée]t[ée])\s*[:=]?\s*([^\n\r]{3,80})',
+            r'(?:fournisseur|vendeur|société|company)\s*[:=]?\s*([^\n\r]{3,80})',
             
-            # Première ligne (SANS validation préfixe pour test)
-            r'^([^\n\r]{5,70})$',  # ← Simplifié au max
+            # Chercher ligne avec forme juridique
+            r'\b([A-ZÀ-Ý][\w\s&]{2,50}(?:SARL|SAS|SA|Ltd|LLC|Inc|Company|Compagnie))\b',
+            
+            # Première ligne significative (>= 3 mots)
+            r'^([A-ZÀ-Ý][^\n\r]{10,70})$',
         ]
         
         for pat in patterns:
-            m = re.search(pat, text, re.IGNORECASE | re.MULTILINE)
+            m = re.search(pat, text_clean, re.IGNORECASE | re.MULTILINE)
             if not m:
                 continue
             
             candidate = m.group(1).strip()
             
-            # Rejeter SEULEMENT mots génériques évidents
-            if any(g in candidate.lower() for g in ['facture', 'invoice', 'total']):
+            # Rejeter metadata
+            bad_words = ['page', 'facture', 'invoice', 'date', 'total', 'client', 'reference']
+            if any(bad in candidate.lower() for bad in bad_words):
                 continue
             
             # Rejeter si que des chiffres
             if candidate.replace(' ', '').isdigit():
                 continue
             
-            # Accepter si >= 3 caractères
-            if len(candidate) >= 3:
-                logger.debug(f"Fournisseur: '{candidate}'")
+            # Accepter si >= 2 mots
+            words = [w for w in candidate.split() if len(w) > 2]
+            if len(words) >= 2:
                 return candidate
         
         return None
-    
+        
 
 
     def _extract_iban(self, text: str) -> Optional[str]:
@@ -431,41 +464,25 @@ class RegexExtractor:
 
 
     def _extract_siret(self, text: str) -> Optional[str]:
-        """
-        Extraction SIRET avec validation Luhn
+        """Fix: prendre PREMIER SIRET (= fournisseur)"""
         
-        SIRET = 14 chiffres (SIREN 9 chiffres + NIC 5 chiffres)
-        Validation : Algorithme de Luhn adapté
-        """
-        # Patterns par ordre de spécificité (du plus au moins spécifique)
         patterns = [
-            # Avec mot-clé explicite (haute confiance)
             r'\bSIRET\b\s*(?:n°|num[eé]ro)?\s*[:\-]?\s*([\d\s]{14,20})',
             r'(?:siret|siren)\s*[:=]?\s*(\d[\d\s]{12,18}\d)',
-            # Format espacé typique 123 456 789 00012
             r'\b(\d{3}\s+\d{3}\s+\d{3}\s+\d{5})\b',
-            # Format sans espaces (utilisé en dernier recours avec validation contexte)
-            # r'\b(\d{14})\b',  # Commenté car trop générique sans contexte
         ]
         
         for pat in patterns:
-            m = re.search(pat, text, re.IGNORECASE)
+            m = re.search(pat, text, re.IGNORECASE)  # Premier match seulement
             if not m:
                 continue
             
-            # Nettoyer
             cleaned = re.sub(r'\s', '', m.group(1))
             
-            # Vérifier longueur exacte
-            if len(cleaned) != 14 or not cleaned.isdigit():
-                continue
-            
-            # Validation Luhn pour SIRET
-            if self._validate_siret_luhn(cleaned):
-                logger.debug(f"SIRET valide trouvé: {cleaned}")
-                return cleaned
-            else:
-                logger.debug(f"SIRET invalide (Luhn): {cleaned}")
+            if len(cleaned) == 14 and cleaned.isdigit():
+                if self._validate_siret_luhn(cleaned):
+                    logger.debug(f"SIRET: {cleaned}")
+                    return cleaned
         
         return None
 
