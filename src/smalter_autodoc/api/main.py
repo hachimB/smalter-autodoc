@@ -12,6 +12,10 @@ from src.smalter_autodoc.utils.config import settings
 from src.smalter_autodoc.models.responses import UploadResponse, ProcessingStatus
 from src.smalter_autodoc.core.pdf_to_image_converter import PDFToImageConverter
 from src.smalter_autodoc.core.ocr_engine import OCREngine
+from src.smalter_autodoc.core.document_router import DocumentRouter
+from src.smalter_autodoc.core.agents.base_agent import ProcessingResult
+from src.smalter_autodoc.core.document_type_validator import DocumentTypeValidator
+
 
 # Setup logging
 logging.basicConfig(
@@ -45,8 +49,6 @@ document_router = DocumentRouter(use_llm=True)
 document_type_validator = DocumentTypeValidator()
 
 
-
-document_router = DocumentRouter(use_llm=True)
 
 
 
@@ -271,34 +273,136 @@ async def upload_document(file: UploadFile = File(...), document_type: str = For
                 message=f"Impossible d'extraire le texte: {str(e)}",
                 metadata=file_metadata
             )
+        
 
-        # ══════════════════════════════════════════════════════════════════
-        # SUCCÈS : Document accepté avec texte extrait
-        # ══════════════════════════════════════════════════════════════════
-
-        logger.info(
-            f"Document {document_id}: ✅ Toutes portes passées "
-            f"(Type: {file_type}, Méthode: {text_extraction_result.extraction_method})"
-        )
-
-        return UploadResponse(
-            document_id=document_id,
-            status=ProcessingStatus.PENDING,
-            file_type=file_type,
-            quality_score=quality_score.dict() if quality_score else None,
-            message="Document accepté, texte extrait avec succès",
-            metadata={
-                **file_metadata,
-                'text_extraction': {
-                    'method': text_extraction_result.extraction_method,
-                    'char_count': text_extraction_result.char_count,
-                    'word_count': text_extraction_result.word_count,
-                    'text_preview': text_extraction_result.text[:200] + "..." if len(text_extraction_result.text) > 200 else text_extraction_result.text,
-                    'ocr_quality': text_extraction_result.ocr_quality.dict() if text_extraction_result.ocr_quality else None
-                }
-            }
+        # ══════════════════════════════════════════════════════
+        # PORTE 3 : Validation Type Document (NOUVEAU)
+        # ══════════════════════════════════════════════════════
+    
+        logger.info(f"Document {document_id}: 🚪 PORTE 3A - Validation type document")
+        
+        type_validation = document_type_validator.validate(
+            text_extraction_result.text,
+            document_type
         )
         
+        if not type_validation["valid"]:
+            # Nettoyage
+            temp_path.unlink()
+            if image_to_check and image_to_check != temp_path:
+                image_to_check.unlink()
+            
+            return UploadResponse(
+                document_id=document_id,
+                status=ProcessingStatus.REJECTED,
+                rejected_at_gate=3,
+                rejection_reason="TYPE_MISMATCH",
+                file_type=file_type,
+                message=type_validation["reason"],
+                suggestions=[
+                    f"Type détecté : {type_validation['detected_type']}",
+                    f"Type déclaré : {type_validation['declared_type']}",
+                    "Vérifiez le type de document avant de le soumettre à nouveau"
+                ],
+                metadata={
+                    **file_metadata,
+                    "type_validation": type_validation
+                }
+            )
+        # ══════════════════════════════════════════════════════
+        # 6. PORTE 3 : Sélection Agent ← NOUVEAU
+        # ══════════════════════════════════════════════════════
+        
+        logger.info(f"Document {document_id}: 🚪 PORTE 3 - Sélection agent")
+        
+        agent = document_router.get_agent(document_type)
+        
+        if not agent:
+            temp_path.unlink()
+            if image_to_check and image_to_check != temp_path:
+                image_to_check.unlink()
+            
+            return UploadResponse(
+                document_id=document_id,
+                status=ProcessingStatus.REJECTED,
+                rejected_at_gate=3,
+                rejection_reason="UNKNOWN_DOCUMENT_TYPE",
+                file_type=file_type,
+                message=f"Type de document non supporté: '{document_type}'",
+                suggestions=[
+                    f"Types supportés : {', '.join(document_router.list_supported_types())}"
+                ],
+                metadata=file_metadata
+            )
+        
+        logger.info(f"Document {document_id}: Agent sélectionné = {agent.agent_name}")
+
+
+
+        # ══════════════════════════════════════════════════════
+        # 7-8. PORTE 4+5 : Extraction + Validation ← NOUVEAU
+        # ══════════════════════════════════════════════════════
+        
+        logger.info(f"Document {document_id}: 🚪 PORTE 4-5 - Extraction structurée + Validation")
+        
+        processing_result: ProcessingResult = agent.process(text_extraction_result.text)
+        
+        # ══════════════════════════════════════════════════════
+        # SUCCÈS OU ÉCHEC
+        # ══════════════════════════════════════════════════════
+        
+        # Nettoyer fichiers temporaires
+        temp_path.unlink()
+        if image_to_check and image_to_check != temp_path and image_to_check.exists():
+            image_to_check.unlink()
+        
+        if processing_result.success:
+            logger.info(f"Document {document_id}: ✅ Traitement réussi")
+            
+            return UploadResponse(
+                document_id=document_id,
+                status=ProcessingStatus.COMPLETED,
+                file_type=file_type,
+                quality_score=quality_score.dict() if quality_score else None,
+                message=f"Document traité avec succès (confiance: {processing_result.confidence_score}%)",
+                metadata={
+                    **file_metadata,
+                    'text_extraction': {
+                        'method': text_extraction_result.extraction_method,
+                        'char_count': text_extraction_result.char_count,
+                    },
+                    'agent': {
+                        'name': processing_result.agent_name,
+                        'document_type': processing_result.document_type,
+                        'extraction_method': processing_result.extraction_method,
+                        'confidence': processing_result.confidence_score,
+                    },
+                    'extracted_data': processing_result.extracted_data,
+                }
+            )
+        
+        else:
+            logger.warning(f"Document {document_id}: ⚠️ Validation échouée")
+            
+            return UploadResponse(
+                document_id=document_id,
+                status=ProcessingStatus.REJECTED,
+                rejected_at_gate=5,
+                rejection_reason="VALIDATION_FAILED",
+                file_type=file_type,
+                quality_score=quality_score.dict() if quality_score else None,
+                message="Validation échouée : champs obligatoires manquants",
+                suggestions=processing_result.errors + processing_result.warnings,
+                metadata={
+                    **file_metadata,
+                    'agent': {
+                        'name': processing_result.agent_name,
+                        'confidence': processing_result.confidence_score,
+                    },
+                    'extracted_data': processing_result.extracted_data,
+                }
+            )
+    
     except HTTPException:
         raise
     except Exception as e:
