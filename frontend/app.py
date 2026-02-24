@@ -170,7 +170,7 @@ with st.sidebar:
     
     # Check API status
     try:
-        health_response = requests.get(f"{API_URL}/health", timeout=2)
+        health_response = requests.get(f"{API_URL}/api/v1/health", timeout=2)
         if health_response.status_code == 200:
             st.success("✅ API Connectée")
         else:
