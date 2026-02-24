@@ -15,7 +15,7 @@ from PIL import Image
 import logging
 from typing import Tuple, Dict, Optional
 from pydantic import BaseModel
-pytesseract.pytesseract.tesseract_cmd = r"C:\Users\22600011\smalter-autodoc\tools\tesseract\tesseract.exe"
+pytesseract.pytesseract.tesseract_cmd = r"C:\Users\22600004\Downloads\AutoDoc\smalter-autodoc\tools\tesseract\tesseract.exe"
 logger = logging.getLogger(__name__)
 
 # ══════════════════════════════════════════════════════════════════
