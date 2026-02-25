@@ -40,11 +40,26 @@ st.markdown("""
     
     .gate-card.success {
         border-left-color: #2ecc71;
+        color: #1a1a1a
     }
     
+    
+        .gate-card.success h4,
+        .gate-card.success p,
+        .gate-card.success strong {
+            color: #1a1a1a !important;       /* Forcer le contraste */
+        }
+
     .gate-card.rejected {
         border-left-color: #e74c3c;
-    }
+        color: #1a1a1a
+        }
+        .gate-card.success h4,
+        .gate-card.success p,
+        .gate-card.success strong {
+            color: #1a1a1a !important;       /* Forcer le contraste */
+        }
+
     
     .gate-card.pending {
         border-left-color: #f39c12;
