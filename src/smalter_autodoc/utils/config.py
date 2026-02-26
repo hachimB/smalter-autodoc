@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     API_RELOAD: bool = True
     
     # File Upload
-    MAX_FILE_SIZE_MB: int = 10
+    MAX_FILE_SIZE_MB: int = 50
     ALLOWED_EXTENSIONS: set = {".pdf", ".jpg", ".jpeg", ".png"}
     
     # Porte 1: Image Quality
