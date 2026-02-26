@@ -43,8 +43,7 @@ quality_checker = ImageQualityChecker(
 ocr_engine = OCREngine(tesseract_lang="fra", min_ocr_confidence=70.0)
 
 
-document_router = DocumentRouter(use_llm=True)
-
+document_router = DocumentRouter(use_llm=True, language='fr')
 
 document_type_validator = DocumentTypeValidator()
 
@@ -53,7 +52,7 @@ document_type_validator = DocumentTypeValidator()
 
 
 @app.post("/api/v1/upload", response_model=UploadResponse)
-async def upload_document(file: UploadFile = File(...), document_type: str = Form(...)):
+async def upload_document(file: UploadFile = File(...), document_type: str = Form(...), language: str = Form('auto')):
     """
     Upload et traitement complet d'un document
     
@@ -127,7 +126,7 @@ async def upload_document(file: UploadFile = File(...), document_type: str = For
         
        # 5. PORTE 1: Qualité image (SEULEMENT pour images)
         quality_score = None
-        image_to_check = None  # ← Nouvelle variable
+        image_to_check = None
         pdf_converter = PDFToImageConverter(default_dpi=300)
 
         if file_type in [FileType.PDF_IMAGE, FileType.IMAGE_PURE]:
@@ -190,7 +189,7 @@ async def upload_document(file: UploadFile = File(...), document_type: str = For
             
 
         # ══════════════════════════════════════════════════════════════════
-        # PORTE 2 : EXTRACTION TEXTE
+        # PORTE 2A : EXTRACTION TEXTE
         # ══════════════════════════════════════════════════════════════════
 
         logger.info(f"Document {document_id}: 🚪 PORTE 2 - Extraction texte")
@@ -275,8 +274,174 @@ async def upload_document(file: UploadFile = File(...), document_type: str = For
             )
         
 
+
+
+
+        # ══════════════════════════════════════════════════════════════════
+        # PORTE 2B : VALIDATION SUBSTANTIALITÉ TEXTE
+        # ══════════════════════════════════════════════════════════════════
+
+        logger.info(f"Document {document_id}: 🚪 PORTE 2B - Validation substantialité")
+
+        text_length = len(text_extraction_result.text.strip())
+
+        # Vérifier si texte substantiel
+        if text_length < 50:
+            logger.warning(
+                f"⚠️ Texte trop court ({text_length} chars). "
+                f"Contenu : '{text_extraction_result.text[:100]}'"  # ← LOG le texte
+            )
+            
+            # Si PDF natif avec peu de texte → Convertir en image et OCR
+            if file_type == FileType.PDF_NATIVE_TEXT:
+                logger.info("🔄 Tentative conversion PDF → Image pour OCR complet")
+                
+                try:
+                    # Convertir première page en image
+                    image_path = pdf_converter.convert_first_page(
+                        temp_path,
+                        settings.PROCESSED_DIR
+                    )
+                    
+                    logger.info(f"✅ Image extraite : {image_path}")  # ← Vérifier chemin
+                    
+                    # OCR sur l'image
+                    new_text_result = ocr_engine.extract_from_image(image_path)
+                    
+                    logger.info(
+                        f"✅ OCR terminé : {new_text_result.char_count} chars extraits\n"
+                        f"Preview : {new_text_result.text[:200]}"  # ← LOG preview
+                    )
+                    
+                    # ════════════════════════════════════════════════════
+                    # IMPORTANT : Vérifier que OCR a vraiment extrait du texte
+                    # ════════════════════════════════════════════════════
+                    
+                    if new_text_result.char_count > text_length:
+                        # OCR a extrait plus de texte → Remplacer
+                        text_extraction_result = new_text_result
+                        logger.info(
+                            f"✅ Texte mis à jour : {text_length} → {new_text_result.char_count} chars"
+                        )
+                    else:
+                        logger.warning(
+                            f"⚠️ OCR n'a pas amélioré l'extraction "
+                            f"({new_text_result.char_count} chars)"
+                        )
+                    
+                    # Nettoyer image temporaire
+                    if image_path.exists():
+                        image_path.unlink()
+                        logger.debug("🗑️ Image temporaire supprimée")
+                
+                except Exception as e:
+                    logger.error(f"❌ Erreur conversion/OCR : {e}", exc_info=True)  # ← Full traceback
+                    
+                    # Nettoyer
+                    temp_path.unlink()
+                    
+                    return UploadResponse(
+                        document_id=document_id,
+                        status=ProcessingStatus.REJECTED,
+                        rejected_at_gate=2,
+                        rejection_reason="TEXT_EXTRACTION_FAILED",
+                        file_type=file_type,
+                        message=f"Texte insuffisant ({text_length} chars) et conversion échouée : {str(e)}",
+                        suggestions=[
+                            "Le document ne contient pas assez de texte exploitable",
+                            "Vérifiez que le scan est complet",
+                            "Essayez de rescanner le document en meilleure qualité",
+                            f"Erreur technique : {str(e)}"  # ← Détail erreur
+                        ],
+                        metadata=file_metadata
+                    )
+
+        # Vérifier si texte = watermark connu
+        if text_length < 100:
+            watermarks = [
+                'onlinephotoscanner', 'camscanner', 'adobe scan',
+                'evaluation', 'demo', 'trial'
+            ]
+            
+            text_lower = text_extraction_result.text.lower()
+            
+            if any(wm in text_lower for wm in watermarks):
+                logger.warning(f"🚨 Watermark détecté : {text_lower}")
+                
+                # Même logique de conversion si pas déjà fait
+                if file_type == FileType.PDF_NATIVE_TEXT and text_length < 100:
+                    logger.info("🔄 Watermark détecté → Force OCR complet")
+                    
+                    try:
+                        image_path = pdf_converter.convert_first_page(
+                            temp_path,
+                            settings.PROCESSED_DIR
+                        )
+                        
+                        new_text_result = ocr_engine.extract_from_image(image_path)
+                        
+                        if new_text_result.char_count > text_length:
+                            text_extraction_result = new_text_result
+                            logger.info(
+                                f"✅ Après OCR forcé : {new_text_result.char_count} chars"
+                            )
+                        
+                        if image_path.exists():
+                            image_path.unlink()
+                            
+                    except Exception as e:
+                        logger.error(f"❌ Erreur OCR forcé watermark : {e}", exc_info=True)
+
+        # ════════════════════════════════════════════════════════════════════
+        # VÉRIFICATION FINALE : Si texte toujours < 50 chars → REJET
+        # ════════════════════════════════════════════════════════════════════
+
+        final_text_length = len(text_extraction_result.text.strip())
+
+        if final_text_length < 50:
+            logger.error(
+                f"❌ REJET : Texte final insuffisant ({final_text_length} chars)\n"
+                f"Contenu : '{text_extraction_result.text}'"
+            )
+            
+            # Nettoyer
+            temp_path.unlink()
+            if image_to_check and image_to_check != temp_path and image_to_check.exists():
+                image_to_check.unlink()
+            
+            return UploadResponse(
+                document_id=document_id,
+                status=ProcessingStatus.REJECTED,
+                rejected_at_gate=2,
+                rejection_reason="TEXT_EXTRACTION_FAILED",
+                file_type=file_type,
+                message=f"Document ne contient pas assez de texte exploitable ({final_text_length} chars)",
+                suggestions=[
+                    "Le document semble vide ou contenir seulement un watermark",
+                    "Vérifiez que le fichier PDF contient bien une image scannée",
+                    "Essayez d'exporter le scan dans un format image (JPG/PNG) plutôt que PDF",
+                    "Rescannez le document original en meilleure qualité"
+                ],
+                metadata={
+                    **file_metadata,
+                    "extracted_text": text_extraction_result.text[:200],
+                    "text_length": final_text_length
+                }
+            )
+
+        logger.info(
+            f"✅ Texte final validé : {final_text_length} chars\n"
+            f"Preview : {text_extraction_result.text[:200]}"
+        )
+
+
+
+
+
+
+
         # ══════════════════════════════════════════════════════
-        # PORTE 3 : Validation Type Document (NOUVEAU)
+        # PORTE 3 : Validation Type Document
         # ══════════════════════════════════════════════════════
     
         logger.info(f"Document {document_id}: 🚪 PORTE 3A - Validation type document")
@@ -309,13 +474,31 @@ async def upload_document(file: UploadFile = File(...), document_type: str = For
                     "type_validation": type_validation
                 }
             )
+        
         # ══════════════════════════════════════════════════════
-        # 6. PORTE 3 : Sélection Agent ← NOUVEAU
+        # DÉTECTION LANGUE (si auto)
+        # ══════════════════════════════════════════════════════
+        if language == 'auto':
+            # Auto-détection depuis texte
+            from src.smalter_autodoc.core.extractors.pattern_manager import PatternManager
+            pattern_manager = PatternManager.from_text(text_extraction_result.text)
+            detected_language = pattern_manager.patterns.LANGUAGE_CODE
+            logger.info(f"Langue auto-détectée : {detected_language}")
+        else:
+            detected_language = language.lower()
+        
+        document_router = DocumentRouter(use_llm=True, language=detected_language)
+    
+
+
+        # ══════════════════════════════════════════════════════
+        # 6. PORTE 3 : Sélection Agent
         # ══════════════════════════════════════════════════════
         
         logger.info(f"Document {document_id}: 🚪 PORTE 3 - Sélection agent")
         
         agent = document_router.get_agent(document_type)
+        
         
         if not agent:
             temp_path.unlink()
@@ -340,7 +523,7 @@ async def upload_document(file: UploadFile = File(...), document_type: str = For
 
 
         # ══════════════════════════════════════════════════════
-        # 7-8. PORTE 4+5 : Extraction + Validation ← NOUVEAU
+        # 7-8. PORTE 4+5 : Extraction + Validation
         # ══════════════════════════════════════════════════════
         
         logger.info(f"Document {document_id}: 🚪 PORTE 4-5 - Extraction structurée + Validation")

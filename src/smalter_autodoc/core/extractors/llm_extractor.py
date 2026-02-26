@@ -60,7 +60,7 @@ class LLMExtractor:
     def __init__(
         self,
         ollama_url: str = "http://localhost:11434",
-        model: str = "mistral:7b-instruct-q4_0",
+        model: str = "llama3:8b",
         timeout: int = 180
     ):
         """
@@ -116,7 +116,7 @@ class LLMExtractor:
         
         # Filtrer les champs
         fields_to_extract = []
-        
+
         for field in missing_fields:
             # Ignorer champs internes
             if field.startswith('_'):
@@ -186,22 +186,31 @@ class LLMExtractor:
     ) -> str:
         """Prompt avec contrainte JSON PLAT"""
         
-        text_truncated = text[:1500] if len(text) > 1500 else text
+        text_truncated = text[:800] if len(text) > 800 else text
         fields_str = ", ".join([f'"{f}"' for f in fields])
-        
+
         prompt = f"""Extrais ces champs en JSON PLAT (valeurs string uniquement):
-    Champs: {fields_str}
 
-    Règles STRICTES:
-    - Format: {{"champ": "valeur"}}
-    - PAS d'objets imbriqués
-    - PAS de tableaux complexes
-    - null si absent
+        Champs à extraire:
+        {fields_str}
 
-    Texte:
-    {text_truncated}
+        RÈGLES STRICTES:
+        1. Format: {{"champ": "valeur"}}
+        2. Valeurs COURTES et PRÉCISES (pas de longs paragraphes)
+        3. Pour adresse: format "Rue, CP Ville" (une ligne)
+        4. Pour lignes_articles: liste séparée par ";" si plusieurs
+        5. null si absent
+        6. PAS d'objets imbriqués
 
-    JSON:"""
+        EXEMPLES:
+        {{"adresse_fournisseur": "123 Rue de Paris, 75001 Paris"}}
+        {{"lignes_articles": "Prestation A (100€); Prestation B (200€)"}}
+        {{"conditions_paiement": "30 jours fin de mois"}}
+
+        Texte:
+        {text_truncated}
+
+        JSON:"""
         
         return prompt
         
@@ -218,7 +227,7 @@ class LLMExtractor:
             "options": {
                 "temperature": 0.1,
                 "top_p": 0.9,
-                "num_predict": 200,  # ← Max token (plus rapide)
+                "num_predict": 150,
             }
         }
         

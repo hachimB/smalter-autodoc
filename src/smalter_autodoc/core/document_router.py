@@ -1,13 +1,6 @@
-"""
-Document Router : Sélectionne l'agent approprié selon le type
+# src/smalter_autodoc/core/document_router.py
 
-Architecture simplifiée :
-- L'utilisateur déclare le type en frontend
-- Le router instancie l'agent correspondant
-- L'agent traite le document
-"""
-
-from typing import Optional
+from typing import Optional, Dict, Type
 from src.smalter_autodoc.core.agents.invoice_agent import InvoiceAgent
 from src.smalter_autodoc.core.agents.bank_agent import BankAgent
 from src.smalter_autodoc.core.agents.cash_agent import CashAgent
@@ -17,82 +10,81 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# ══════════════════════════════════════════════════════════════
-# REGISTRE DES AGENTS DISPONIBLES
-# ══════════════════════════════════════════════════════════════
-
-AGENT_REGISTRY = {
-    "FACTURE": InvoiceAgent,
-    "RELEVE_BANCAIRE": BankAgent,
-    "TICKET_Z": CashAgent,
-}
-
 class DocumentRouter:
     """
-    Router simple : Sélectionne l'agent selon le type déclaré
+    Router qui sélectionne l'agent selon type déclaré
     
-    Principe :
-    - Pas d'analyse ML pour déterminer le type
-    - L'utilisateur a déjà sélectionné le type en frontend
-    - On instancie juste le bon agent
-    
-    Utilisation :
-        >>> router = DocumentRouter()
-        >>> agent = router.get_agent("FACTURE")
-        >>> result = agent.process(texte_ocr)
+    Support multi-langues via HybridExtractor
     """
     
-    def __init__(self, use_llm: bool = True):
+    # Registre des agents (attribut de classe)
+    AGENT_REGISTRY: Dict[str, Type[BaseDocumentAgent]] = {
+        "FACTURE": InvoiceAgent,
+        "RELEVE_BANCAIRE": BankAgent,
+        "TICKET_Z": CashAgent,
+    }
+    
+    def __init__(self, use_llm: bool = True, language: str = 'fr'):
         """
         Args:
-            use_llm: Activer/désactiver le LLM dans HybridExtractor
+            use_llm: Activer LLM dans HybridExtractor
+            language: Langue pour patterns Regex (fr, en, ar...)
         """
-        # Créer un extracteur partagé par tous les agents
-        self.extractor = HybridExtractor(use_llm=use_llm)
-        
-        # Cache des agents instanciés (pour éviter re-création)
-        self._agents_cache = {}
+        self.use_llm = use_llm
+        self.language = language
+        self._agents_cache: Dict[str, BaseDocumentAgent] = {}
         
         logger.info(
-            f"DocumentRouter initialisé avec {len(AGENT_REGISTRY)} agents disponibles"
+            f"DocumentRouter initialisé "
+            f"(Langue: {language}, LLM: {'activé' if use_llm else 'désactivé'})"
         )
     
     def get_agent(self, document_type: str) -> Optional[BaseDocumentAgent]:
         """
-        Retourne l'agent correspondant au type déclaré
+        Retourne agent pour le type demandé (avec langue configurée)
         
         Args:
-            document_type: Type déclaré par l'utilisateur
-                          ("FACTURE", "RELEVE_BANCAIRE", "TICKET_Z")
-        
+            document_type: "FACTURE", "RELEVE_BANCAIRE", "TICKET_Z"
+            
         Returns:
-            Instance de l'agent approprié, ou None si type inconnu
+            Instance de l'agent ou None si type inconnu
         """
         
         document_type = document_type.upper().strip()
         
-        # Vérifier si agent existe
-        agent_class = AGENT_REGISTRY.get(document_type)
-        
-        if not agent_class:
-            logger.warning(
+        # Vérifier type supporté
+        if document_type not in self.AGENT_REGISTRY:  # ← FIX : self.AGENT_REGISTRY
+            logger.error(
                 f"Type de document inconnu : '{document_type}'. "
-                f"Types supportés : {list(AGENT_REGISTRY.keys())}"
+                f"Types supportés : {list(self.AGENT_REGISTRY.keys())}"
             )
             return None
         
-        # Utiliser le cache si déjà instancié
-        if document_type not in self._agents_cache:
-            logger.info(f"Instanciation {agent_class.__name__} pour type '{document_type}'")
-            self._agents_cache[document_type] = agent_class(self.extractor)
+        # Cache par (type, langue) pour éviter recréation
+        cache_key = f"{document_type}_{self.language}"
         
-        return self._agents_cache[document_type]
+        if cache_key not in self._agents_cache:
+            agent_class = self.AGENT_REGISTRY[document_type]
+            
+            # Créer HybridExtractor avec config langue
+            extractor = HybridExtractor(
+                use_llm=self.use_llm,
+                language=self.language
+            )
+            
+            # Instancier agent avec extractor configuré
+            agent = agent_class(extractor=extractor)
+            
+            # Cache
+            self._agents_cache[cache_key] = agent
+            
+            logger.info(
+                f"Instanciation {agent.agent_name} pour type '{document_type}' "
+                f"(langue: {self.language})"
+            )
+        
+        return self._agents_cache[cache_key]
     
     def list_supported_types(self) -> list:
-        """
-        Liste des types de documents supportés
-        
-        Returns:
-            Liste des types disponibles
-        """
-        return list(AGENT_REGISTRY.keys())
+        """Liste types de documents supportés"""
+        return list(self.AGENT_REGISTRY.keys())

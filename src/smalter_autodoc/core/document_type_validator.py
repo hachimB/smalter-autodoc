@@ -113,9 +113,9 @@ class DocumentTypeValidator:
             confidence = 0.0
             valid = False
             reason = (
-                f"Document semble être un '{detected_type}' "
+                f"Document semble être un(e) '{detected_type}' "
                 f"(mots trouvés : {', '.join(forbidden_found)}), "
-                f"pas un '{declared_type}'"
+                f"pas un(e) '{declared_type}'"
             )
         
         # Cas 2 : Aucun mot requis trouvé → AVERTISSEMENT (pas rejet)

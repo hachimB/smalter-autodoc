@@ -72,6 +72,8 @@ class FileTypeDetector:
         except Exception as e:
             logger.error(f"Erreur détection type fichier: {str(e)}")
             return FileType.UNSUPPORTED, {'error': str(e)}
+        
+        
     
     def _analyze_pdf(self, file_path: str) -> Tuple[FileType, dict]:
         """
