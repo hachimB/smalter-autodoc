@@ -38,18 +38,37 @@ class HybridExtractor:
         'HYBRID'  # Ou 'REGEX' si LLM pas nécessaire
     """
     
-    def __init__(self, use_llm: bool = True):
+    def __init__(self, use_llm: bool = True, language: str = 'fr'):
         """
         Args:
             use_llm: Si False, désactive LLM (Regex seul, mode fallback)
         """
-        self.regex = RegexExtractor()
+
+        self.regex = RegexExtractor(language=language)
         self.llm = LLMExtractor() if use_llm else None
         
         logger.info(
             f"HybridExtractor initialisé "
-            f"(LLM: {'activé' if use_llm else 'désactivé'})"
+            f"(Langue: {language}, LLM: {'activé' if use_llm else 'désactivé'})"
         )
+    
+    @classmethod
+    def from_text(cls, text: str, use_llm: bool = True) -> 'HybridExtractor':
+        """Factory avec auto-détection langue"""
+        regex = RegexExtractor.from_text(text)
+        
+        extractor = cls.__new__(cls)
+        extractor.regex = regex
+        extractor.llm = LLMExtractor() if use_llm else None
+        
+        logger.info(
+            f"HybridExtractor créé depuis texte "
+            f"(Langue détectée: {regex.patterns.LANGUAGE_CODE})"
+        )
+        
+        return extractor
+    
+
     
     def extract(self, text: str, document_type: str, field_hints: Dict[str, str] = None) -> Dict[str, Any]:
         """
@@ -116,6 +135,7 @@ class HybridExtractor:
                 
                 try:
                     llm_result = self.llm.extract(text, missing, document_type, field_hints=field_hints)
+                    print("LLM RESULT:", llm_result)
                     
                     if llm_result:
                         logger.info(

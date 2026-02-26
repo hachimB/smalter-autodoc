@@ -1,11 +1,6 @@
 # src/smalter_autodoc/core/extractors/regex_extractor.py
 """
-Phase 1 : Extraction par patterns Regex (version robuste 2026)
-
-Objectif : Extraire champs structurés depuis texte brut OCRisé
-Vitesse  : ~0.05–0.15 seconde
-Précision attendue : 80–92% sur factures françaises standards
-                       (après nettoyage OCR + validation stricte)
+Extractor refactorisé avec patterns configurables
 """
 
 import re
@@ -13,35 +8,23 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime
 import logging
 
+from .pattern_manager import PatternManager
+from .patterns.base_patterns import BasePatterns
+
 logger = logging.getLogger(__name__)
 
 class RegexExtractor:
     """
-    Extrait des champs structurés depuis du texte brut via regex.
+    Extracteur regex multi-langues
     
-    Points forts :
-    - Gestion erreurs OCR courantes (O→0, l→1, espaces parasites)
-    - Normalisation dates/montants/IBAN/SIRET
-    - Validation stricte (Luhn pour SIRET, format ISO pour dates)
-    - Logging détaillé + tracking champs manquants
-    
-    Utilisation:
-        extractor = RegexExtractor()
-        data = extractor.extract_invoice_fields(texte_ocr)
+    Usage:
+        # Langue explicite
+        extractor = RegexExtractor(language='fr')
+        
+        # Auto-détection
+        extractor = RegexExtractor.from_text(texte)
     """
-
-
-    # Pattern montant ultra-robuste (négatif, devises multiples, formats FR/EN/CH)
-    AMOUNT_PATTERN = r'(?:(?:[\-−])?\s*(?:[€$£]|USD|EUR|CHF|FCFA|XOF|MAD)?\s*)?(\d{1,3}(?:[\s\.,\']?\d{3})*[.,]\d{1,2})\b'
     
-    # Mots génériques à exclure pour extraction fournisseur
-    GENERIC_COMPANY_WORDS = {
-        'facture', 'invoice', 'devis', 'avoir', 'note', 'proforma',
-        'relevé', 'extrait', 'bordereau', 'bon', 'ticket', 'reçu',
-        'attestation', 'certificat', 'document', 'exemplaire'
-    }
-
-
 
     def _normalize_text(self, text: str) -> str:
         """
@@ -63,15 +46,34 @@ class RegexExtractor:
     
 
 
+    def __init__(self, language: str = 'fr'):
+        """
+        Args:
+            language: Code langue (fr, en, ar...)
+        """
+        self.pattern_manager = PatternManager(language=language)
+        self.patterns: BasePatterns = self.pattern_manager.get_patterns()
+        
+        logger.info(
+            f"RegexExtractor initialisé "
+            f"(langue: {self.patterns.LANGUAGE_NAME})"
+        )
+    
+    @classmethod
+    def from_text(cls, text: str) -> 'RegexExtractor':
+        """Factory avec auto-détection langue"""
+        manager = PatternManager.from_text(text)
+        extractor = cls.__new__(cls)
+        extractor.pattern_manager = manager
+        extractor.patterns = manager.get_patterns()
+        return extractor
+    
     def extract_invoice_fields(self, text: str) -> Dict[str, Any]:
-        """
-        Extrait les champs clés d'une facture.
-        Retourne un dict avec None pour les champs non trouvés.
-        """
-
+        """Extraction facture (patterns adaptés à la langue)"""
+        
         text = self._normalize_text(text)
-
-        result: Dict[str, Any] = {
+        
+        result = {
             "numero_facture": None,
             "date_facture": None,
             "montant_ttc": None,
@@ -79,336 +81,248 @@ class RegexExtractor:
             "tva_rates": [],
             "fournisseur": None,
             "siret": None,
-            "adresse_fournisseur": None,  # Pour Phase 2 (LLM)
-            "lignes_articles": [],         # Pour Phase 2 (LLM)
-            "conditions_paiement": None,   # Pour Phase 2 (LLM)
+            "adresse_fournisseur": None,
+            "lignes_articles": [],
+            "conditions_paiement": None,
             "_missing_fields": [],
             "_extraction_method": "REGEX",
+            "_language": self.patterns.LANGUAGE_CODE, 
         }
-
-        # Ordre logique : commencer par les champs les plus discriminants
+        
+        # Extraction avec patterns langue
         result["numero_facture"] = self._extract_invoice_number(text)
-        result["date_facture"]   = self._extract_date(text)
-        result["siret"]          = self._extract_siret(text)
-        result["montant_ttc"]    = self._extract_ttc(text)
-        result["montant_ht"]     = self._extract_ht(text)
-        result["tva_rates"]      = self._extract_tva_rates(text)
-        result["fournisseur"]    = self._extract_fournisseur(text)
-
-        # Tracking des champs manquants
+        result["date_facture"] = self._extract_date(text)
+        result["montant_ttc"] = self._extract_ttc(text)
+        result["montant_ht"] = self._extract_ht(text)
+        result["tva_rates"] = self._extract_vat_rates(text)
+        result["fournisseur"] = self._extract_supplier(text)
+        result["siret"] = self._extract_siret(text) if self.patterns.LANGUAGE_CODE == 'fr' else None
+        
+        # Tracking
         missing = [k for k, v in result.items() 
                    if not k.startswith('_') and (v is None or v == [])]
         result["_missing_fields"] = missing
-
+        
         logger.info(
-            f"Regex facture → {len([k for k in result if not k.startswith('_')]) - len(missing)}"
-            f"/{len([k for k in result if not k.startswith('_')])} champs trouvés | "
-            f"Manquants: {missing}"
+            f"Regex ({self.patterns.LANGUAGE_CODE}) → "
+            f"{len(result) - len(missing) - 3}/{len(result) - 3} champs"
         )
-
+        
         return result
-
-    def extract_bank_fields(self, text: str) -> Dict[str, Any]:
-        """Extrait les champs clés d'un relevé bancaire"""
-        result: Dict[str, Any] = {
-            "iban": None,
-            "bic": None,
-            "solde_initial": None,
-            "solde_final": None,
-            "transactions": [],  # à remplir dans une phase 2 si besoin
-            "_missing_fields": [],
-            "_extraction_method": "REGEX",
-        }
-
-        result["iban"]         = self._extract_iban(text)
-        result["bic"]          = self._extract_bic(text)
-        result["solde_final"]  = self._extract_solde(text)
-
-        missing = [k for k, v in result.items() 
-                   if not k.startswith('_') and (v is None or v == [])]
-        result["_missing_fields"] = missing
-
-        logger.info(
-            f"Regex relevé bancaire → {len(result) - len(missing) - 2}/{len(result) - 2} champs | "
-            f"Manquants: {missing}"
-        )
-
-        return result
-
-    # ────────────────────────────────────────────────
-    #  MÉTHODES D'EXTRACTION PRIVÉES
-    # ────────────────────────────────────────────────
-
+    
+    # ═══════════════════════════════════════════════════════
+    # MÉTHODES D'EXTRACTION (utilisent self.patterns)
+    # ═══════════════════════════════════════════════════════
+    
     def _extract_invoice_number(self, text: str) -> Optional[str]:
-        """
-        Extraction numéro facture (fix complet)
-        
-        Gère :
-        - Numéros avec points : S-3.00000003
-        - Numéros avec tirets : FC-2024-001
-        - Numéros alphanumériques : INV2024001
-        - Numéros purement numériques : 20240001
-        """
-        
-        patterns = [
-            # Pattern 1 : Avec mot-clé + numéro complexe (points/tirets acceptés)
-            r'(?:facture|invoice|fac\.?|n°|no\.?|num[eé]ro)\s*[:#]?\s*([A-Z0-9]+(?:[\.\-/][A-Z0-9]+)*)',
-            
-            # Pattern 2 : Format structuré sans mot-clé
-            r'\b([A-Z]{1,6}[-/.]\d+(?:[-.]\d+)*)\b',  # S-3.00000003
-            
-            # Pattern 3 : Alphanumérique classique
-            r'\b([A-Z]{2,6}[-/]?\d{2,8})\b',          # FC-2024-001
-            
-            # Pattern 4 : Numérique pur (dernier recours)
-            r'\b(\d{8,14})\b',
-        ]
+        """Extraction numéro avec patterns langue"""
+        patterns = self.patterns.get_invoice_number_patterns()
         
         for pat in patterns:
             m = re.search(pat, text, re.IGNORECASE)
             if m:
                 val = m.group(1).strip()
                 
-                # Validation post-extraction
-                
-                # 1. Rejeter mots communs
-                if val.lower() in ['date', 'total', 'ttc', 'ht', 'tva', 'client', 'page', 'n']:
-                    logger.debug(f"Numéro facture rejeté (mot commun): '{val}'")
+                # Validation 1 : Mots communs
+                if val.lower() in self.patterns.get_generic_words():
                     continue
                 
-                # 2. Rejeter si trop court (< 2 caractères)
-                if len(val) < 2:
-                    logger.debug(f"Numéro facture rejeté (trop court): '{val}'")
+                # Validation 2 : Longueur minimum
+                if len(val) < 1:
                     continue
                 
-                # 3. Accepter si >= 2 caractères et non-commun
+                # Validation 3 : Rejeter "to", "in", "no" seuls
+                if len(val) <= 2 and val.lower() in ['to', 'in', 'no', 'by', 'or']:
+                    logger.debug(f"Rejet mot anglais court: {val}")
+                    continue
+                
+                # Validation 4 : Rejeter si ressemble à téléphone
+                if len(val) == 10 and val.isdigit():
+                    context = text[max(0, m.start()-50):m.start()+50]
+                    if 'invoice' not in context.lower() and 'number' not in context.lower():
+                        logger.debug(f"Rejet téléphone suspect: {val}")
+                        continue
+                
                 logger.debug(f"✅ Numéro facture: {val}")
                 return val
         
         return None
 
+    
     def _extract_date(self, text: str) -> Optional[str]:
-        """
-        Date normalisée en ISO YYYY-MM-DD
+        """Extraction date avec patterns + mois langue"""
+        patterns = self.patterns.DATE_PATTERNS
+        months = self.patterns.get_month_names()
         
-        Supporte :
-        - Formats numériques : DD/MM/YYYY, YYYY-MM-DD
-        - Formats textuels : 15 décembre 2024, December 15, 2024
-        - Abréviations mois français et anglais
-        """
-        patterns = [
-            r'\b(\d{1,2})[/\-\.](\d{1,2})[/\-\.](\d{2,4})\b',              # DD/MM/YY ou YYYY
-            r'\b(\d{4})[/\-\.](\d{1,2})[/\-\.](\d{1,2})\b',                # YYYY-MM-DD
-            r'\b(\d{1,2})\s*(janv\.?|f[ée]vr\.?|mars|avr\.?|mai|juin|juil\.?|ao[uû]t|sept\.?|oct\.?|nov\.?|d[ée]c\.?)\s*(\d{2,4})\b',
-            r'\b([A-Za-zÀ-ÿ]+)\s+(\d{1,2}),?\s+(\d{2,4})\b',               # Month DD, YYYY
-            r'\b(\d{1,2})\s+([A-Za-zÀ-ÿ]+)\s+(\d{2,4})\b',                 # DD Month YYYY
-        ]
-
-        months = {
-            # Français complets et abréviations
-            "janvier":1, "jan":1, "janv":1, "janv.":1,
-            "février":2, "fevrier":2, "fevr":2, "fév":2, "févr":2, "fevr.":2, "fév.":2,
-            "mars":3,
-            "avril":4, "avr":4, "avr.":4,
-            "mai":5,
-            "juin":6, "jun":6,
-            "juillet":7, "juil":7, "juil.":7,
-            "août":8, "aout":8, "aou":8, "aoû":8,
-            "septembre":9, "sept":9, "sep":9, "sept.":9,
-            "octobre":10, "oct":10, "oct.":10,
-            "novembre":11, "nov":11, "nov.":11,
-            "décembre":12, "decembre":12, "dec":12, "déc":12, "déc.":12, "dec.":12,
-            # Anglais complets et abréviations
-            "january":1, "february":2, "march":3, "april":4, "may":5, "june":6,
-            "july":7, "august":8, "september":9, "october":10, "november":11, "december":12,
-            "jan":1, "feb":2, "mar":3, "apr":4, "jun":6, "jul":7,
-            "aug":8, "sep":9, "oct":10, "nov":11, "dec":12,
-        }
-
         for pat in patterns:
             m = re.search(pat, text, re.IGNORECASE)
             if not m:
                 continue
-
+            
             groups = m.groups()
             
             try:
-                # YYYY-MM-DD (groupe 0 a 4 chiffres)
-                if len(groups[0]) == 4 and groups[0].isdigit():
+                # Logique extraction (similaire à avant)
+                # Mais utilise months mapping de la langue
+                
+                # Si groupe contient nom mois
+                for i, g in enumerate(groups):
+                    if isinstance(g, str) and g.replace('.','').lower() in months:
+                        month_name = g.replace('.','').lower()
+                        month = months[month_name]
+                        
+                        # Extraire jour et année
+                        day = int(groups[i-1] if i > 0 else groups[i+1])
+                        year = int(groups[i+1] if i < len(groups)-1 else groups[i-1])
+                        
+                        if year < 100:
+                            year += 2000 if year <= 50 else 1900
+                        
+                        dt = datetime(year, month, day)
+                        return dt.strftime("%Y-%m-%d")
+                
+                # Format numérique standard
+                if len(groups[0]) == 4:  # YYYY-MM-DD
                     year, month, day = map(int, groups)
-                
-                # "DD Month YYYY" (groupe 1 est texte)
-                elif groups[1].replace('é','e').replace('û','u').replace('.','').isalpha():
-                    month_key = groups[1].lower().replace('é','e').replace('û','u').replace('.','').strip()
-                    month = months.get(month_key)
-                    if not month:
-                        continue
-                    day, year = int(groups[0]), int(groups[2])
-                
-                # "Month DD, YYYY" (groupe 0 est texte)
-                elif groups[0].replace('é','e').replace('û','u').replace('.','').isalpha():
-                    month_key = groups[0].lower().replace('é','e').replace('û','u').replace('.','').strip()
-                    month = months.get(month_key)
-                    if not month:
-                        continue
-                    day, year = int(groups[1]), int(groups[2])
-                
-                # DD/MM/YY ou DD/MM/YYYY (format par défaut)
-                else:
+                else:  # DD/MM/YYYY
                     day, month, year = map(int, groups)
-
-                # Gestion année sur 2 chiffres (YY → YYYY)
-                if 0 <= year <= 99:
-                    year += 2000 if year <= 50 else 1900
-
-                # Validation et normalisation
-                dt = datetime(year, month, day)
-                iso_date = dt.strftime("%Y-%m-%d")
-                logger.debug(f"Date trouvée: {iso_date}")
-                return iso_date
                 
-            except (ValueError, TypeError, KeyError) as e:
-                logger.debug(f"Échec parsing date '{m.group(0)}': {e}")
+                if year < 100:
+                    year += 2000 if year <= 50 else 1900
+                
+                dt = datetime(year, month, day)
+                return dt.strftime("%Y-%m-%d")
+                
+            except (ValueError, KeyError):
                 continue
-
-        return None
-
-    def _extract_ttc(self, text: str) -> Optional[float]:
-        """Fix: gérer tableaux multi-colonnes"""
         
-        patterns = [
-            # Pattern explicite avec "TTC"
-            r'(?:total\s+)?ttc\s*[:=]?\s*' + self.AMOUNT_PATTERN,
-            r'(?:net\s+[àa]\s+payer|à\s+régler)\s*[:=]?\s*' + self.AMOUNT_PATTERN,
-            
-            # Pattern tableau : "Total" suivi de 2 montants (prendre le 2ème)
-            r'total\s+(?:g[ée]n[ée]ral)?\s*' + self.AMOUNT_PATTERN + r'\s+' + self.AMOUNT_PATTERN,
-            
-            # Somme à payer
-            r'somme\s+[àa]\s+payer\s*[:=]?\s*' + self.AMOUNT_PATTERN,
-        ]
+        return None
+    
+    def _extract_ttc(self, text: str) -> Optional[float]:
+        """Extraction TTC avec patterns langue"""
+        patterns = self.patterns.get_ttc_patterns()
+        amount_pattern = self.patterns.AMOUNT_PATTERN
         
         amounts = []
         for pat in patterns:
-            matches = list(re.finditer(pat, text, re.IGNORECASE))
-            for m in matches:
-                # Si 2 groupes capturés (tableau), prendre le 2ème
-                if m.lastindex and m.lastindex >= 2:
-                    amt = self._parse_amount(m.group(m.lastindex))
-                else:
-                    amt = self._parse_amount(m.group(1))
-                
-                if amt is not None and amt != 0:
+            # Remplacer {amount} par pattern réel
+            full_pattern = pat.replace('{amount}', amount_pattern)
+            
+            for m in re.finditer(full_pattern, text, re.IGNORECASE):
+                amt = self._parse_amount(m.group(m.lastindex if m.lastindex else 1))
+                if amt:
                     amounts.append(amt)
         
-        if amounts:
-            # Prendre le plus élevé (TTC > HT)
-            value = max(amounts)
-            logger.debug(f"TTC: {value}€")
-            return value
-        
-        return None
+        return max(amounts) if amounts else None
+    
 
     def _extract_ht(self, text: str) -> Optional[float]:
-        """Fix: gérer tableaux multi-colonnes"""
-        
-        patterns = [
-            # Explicite avec "HT"
-            r'(?:total\s+)?(?:h\.?t\.?|hors\s+taxes?)\s*[:=]?\s*' + self.AMOUNT_PATTERN,
-            
-            # Tableau : "Total" + 1er montant
-            r'total\s+(?:g[ée]n[ée]ral)?\s*' + self.AMOUNT_PATTERN,
-        ]
+        """Extraction HT avec patterns langue"""
+        patterns = self.patterns.get_ht_patterns()
+        amount_pattern = self.patterns.AMOUNT_PATTERN
         
         for pat in patterns:
-            m = re.search(pat, text, re.IGNORECASE)
+            full_pattern = pat.replace('{amount}', amount_pattern)
+            m = re.search(full_pattern, text, re.IGNORECASE)
             if m:
                 amt = self._parse_amount(m.group(1))
                 if amt:
-                    logger.debug(f"HT: {amt}€")
                     return amt
         
         return None
+    
 
-    def _extract_tva_rates(self, text: str) -> List[float]:
-        """
-        Taux de TVA présents dans le document
-        
-        Taux valides en France 2024-2026 : 2.1%, 5.5%, 8.5%, 10%, 20%
-        """
-        pattern = r'(?:tva|t\.?v\.?a\.?|vat|v\.?a\.?t\.?)\s*[:=]?\s*(2[.,]1|5[.,]5|8[.,]5|10|20)\s*%?'
+    def _extract_vat_rates(self, text: str) -> List[float]:
+        """Extraction taux TVA validés selon pays"""
+        patterns = self.patterns.get_vat_patterns()
+        valid_rates = self.patterns.get_valid_vat_rates()
         
         rates = set()
-        for m in re.finditer(pattern, text, re.IGNORECASE):
-            rate = float(m.group(1).replace(',', '.'))
-            rates.add(rate)
+        for pat in patterns:
+            # Construire pattern avec taux valides
+            rate_regex = '|'.join([str(r).replace('.', '[.,]') for r in valid_rates])
+            full_pattern = pat.replace('{rate}', f'({rate_regex})')
+            
+            for m in re.finditer(full_pattern, text, re.IGNORECASE):
+                rate = float(m.group(1).replace(',', '.'))
+                if rate in valid_rates:
+                    rates.add(rate)
         
-        sorted_rates = sorted(rates)
-        if sorted_rates:
-            logger.debug(f"Taux TVA trouvés: {sorted_rates}")
-        
-        return sorted_rates
+        return sorted(rates)
+    
 
-    def _extract_fournisseur(self, text: str) -> Optional[str]:
-        """Fix: chercher après logo/header, éviter metadata"""
-        
-        # Nettoyer le texte d'abord (supprimer metadata page)
-        text_clean = re.sub(r'Page\s+\d+/\d+', '', text, flags=re.IGNORECASE)
-        text_clean = re.sub(r'Facture\s+n°.*', '', text_clean, flags=re.IGNORECASE)
-        
-        patterns = [
-            # Pattern avec mot-clé
-            r'(?:fournisseur|vendeur|société|company)\s*[:=]?\s*([^\n\r]{3,80})',
-            
-            # Chercher ligne avec forme juridique
-            r'\b([A-ZÀ-Ý][\w\s&]{2,50}(?:SARL|SAS|SA|Ltd|LLC|Inc|Company|Compagnie))\b',
-            
-            # Première ligne significative (>= 3 mots)
-            r'^([A-ZÀ-Ý][^\n\r]{10,70})$',
-        ]
+    def _extract_supplier(self, text: str) -> Optional[str]:
+        """Extraction fournisseur avec patterns langue"""
+        patterns = self.patterns.get_supplier_patterns()
+        generic_words = self.patterns.get_generic_words()
         
         for pat in patterns:
-            m = re.search(pat, text_clean, re.IGNORECASE | re.MULTILINE)
+            m = re.search(pat, text, re.IGNORECASE | re.MULTILINE)
             if not m:
                 continue
             
             candidate = m.group(1).strip()
             
-            # Rejeter metadata
-            bad_words = ['page', 'facture', 'invoice', 'date', 'total', 'client', 'reference']
-            if any(bad in candidate.lower() for bad in bad_words):
+            # Validation
+            if any(word in candidate.lower() for word in generic_words):
                 continue
             
-            # Rejeter si que des chiffres
             if candidate.replace(' ', '').isdigit():
                 continue
             
-            # Accepter si >= 2 mots
             words = [w for w in candidate.split() if len(w) > 2]
             if len(words) >= 2:
                 return candidate
         
         return None
-        
 
+    def extract_bank_fields(self, text: str) -> Dict[str, Any]:
+        """Extrait les champs clés d'un relevé bancaire"""
+        
+        text = self._normalize_text(text)
+        
+        result: Dict[str, Any] = {
+            "iban": None,
+            "bic": None,
+            "solde_initial": None,
+            "solde_final": None,
+            "transactions": [],
+            "_missing_fields": [],
+            "_extraction_method": "REGEX",
+            "_language": self.patterns.LANGUAGE_CODE,
+        }
+
+        result["iban"] = self._extract_iban(text)
+        result["bic"] = self._extract_bic(text)
+        result["solde_final"] = self._extract_solde(text)
+
+        missing = [k for k, v in result.items() 
+                if not k.startswith('_') and (v is None or v == [])]
+        result["_missing_fields"] = missing
+
+        logger.info(
+            f"Regex ({self.patterns.LANGUAGE_CODE}) relevé bancaire → "
+            f"{len(result) - len(missing) - 3}/{len(result) - 3} champs"
+        )
+
+        return result
+
+    # ══════════════════════════════════════════════════════════════
+    # MÉTHODES BANCAIRES ( avec self.patterns)
+    # ══════════════════════════════════════════════════════════════
 
     def _extract_iban(self, text: str) -> Optional[str]:
-        """
-        Extraction IBAN avec validation longueur selon pays
-        
-        Support multi-pays : FR, DE, ES, IT, BE, CH, GB, etc.
-        """
-        # Pattern flexible pour tous pays
-        pattern = r'(?:IBAN\s*[:=]?\s*)?([A-Z]{2}\d{2}\s*(?:[A-Z0-9\s]{12,30}))\b'
+        """Extraction IBAN avec pattern langue"""
+        pattern = self.patterns.get_iban_pattern()  # ← Utiliser pattern langue
         
         m = re.search(pattern, text, re.IGNORECASE)
         if not m:
             return None
         
-        # Nettoyer et normaliser
+        # Nettoyer
         iban = re.sub(r'\s', '', m.group(1)).upper()
         
-        # Validation longueur selon code pays
+        # Validation longueur
         valid_lengths = {
             'FR': 27, 'DE': 22, 'ES': 24, 'IT': 27, 'PT': 25,
             'BE': 16, 'NL': 18, 'LU': 20, 'CH': 21, 'GB': 22,
@@ -421,9 +335,8 @@ class RegexExtractor:
         if expected_length and len(iban) == expected_length:
             logger.debug(f"IBAN valide ({country_code}): {iban[:8]}...")
             return iban
-        else:
-            logger.debug(f"IBAN invalide (longueur): {iban[:8]}... (attendu: {expected_length}, reçu: {len(iban)})")
-            return None
+        
+        return None
 
     def _extract_bic(self, text: str) -> Optional[str]:
         """BIC/SWIFT (8 ou 11 caractères)"""
@@ -436,35 +349,39 @@ class RegexExtractor:
             return bic
         
         return None
-    
-
 
     def _extract_solde(self, text: str) -> Optional[float]:
-        """Solde final (fix: date entre mot-clé et montant)"""
-        patterns = [
-            r'(?:solde\s+final|nouveau\s+solde|solde\s+cr[ée]diteur|solde\s+au)[\s\S]{0,50}?' + self.AMOUNT_PATTERN,
-            r'solde\s*[:=]?\s*' + self.AMOUNT_PATTERN,
-        ]
+        """Solde final avec patterns langue"""
+        patterns = self.patterns.get_balance_patterns()  # ← Pattern langue
+        amount_pattern = self.patterns.AMOUNT_PATTERN     # ← Pattern langue
         
         amounts = []
         for pat in patterns:
-            for m in re.finditer(pat, text, re.IGNORECASE):
+            # Remplacer placeholder {amount} par pattern réel
+            full_pattern = pat.replace('{amount}', amount_pattern)
+            
+            for m in re.finditer(full_pattern, text, re.IGNORECASE):
                 amount_str = m.group(m.lastindex) if m.lastindex else m.group(1)
                 amt = self._parse_amount(amount_str)
                 if amt is not None:
                     amounts.append(amt)
         
         if amounts:
-            value = amounts[-1]
+            value = amounts[-1]  # Prendre le dernier (généralement solde final)
             logger.debug(f"Solde final trouvé: {value}€")
             return value
         
         return None
 
-
-
     def _extract_siret(self, text: str) -> Optional[str]:
-        """Fix: prendre PREMIER SIRET (= fournisseur)"""
+        """
+        SIRET français uniquement
+        Ne s'applique QUE si langue = 'fr'
+        """
+        
+        # Skip si pas français
+        if self.patterns.LANGUAGE_CODE != 'fr':
+            return None
         
         patterns = [
             r'\bSIRET\b\s*(?:n°|num[eé]ro)?\s*[:\-]?\s*([\d\s]{14,20})',
@@ -473,7 +390,7 @@ class RegexExtractor:
         ]
         
         for pat in patterns:
-            m = re.search(pat, text, re.IGNORECASE)  # Premier match seulement
+            m = re.search(pat, text, re.IGNORECASE)
             if not m:
                 continue
             
@@ -485,6 +402,8 @@ class RegexExtractor:
                     return cleaned
         
         return None
+
+
 
     def _validate_siret_luhn(self, siret: str) -> bool:
         """
@@ -546,7 +465,7 @@ class RegexExtractor:
         cleaned = cleaned.replace('S', '5').replace('Z', '2')  # Moins fréquent
 
         # ── Supprimer devises et espaces inutiles ──
-        cleaned = re.sub(r'[€$£]|CHF|EUR|USD|FCFA|XOF|GBP', '', cleaned)
+        cleaned = re.sub(r'[€$£]|CHF|EUR|USD|FCFA|XOF|GBP|MAD', '', cleaned)
         cleaned = re.sub(r'\s', '', cleaned)
         
         # ── Apostrophe suisse ──

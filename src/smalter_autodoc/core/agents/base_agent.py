@@ -11,6 +11,7 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any, List
 from pydantic import BaseModel
 import logging
+from src.smalter_autodoc.core.extractors.hybrid_extractor import HybridExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -67,13 +68,20 @@ class BaseDocumentAgent(ABC):
     # Hints pour guider le LLM
     field_hints: Dict[str, str] = {}
     
-    def __init__(self, extractor):
+    def __init__(self, extractor: HybridExtractor = None):
         """
         Args:
-            extractor: Instance de HybridExtractor
+            extractor: Instance HybridExtractor (avec langue configurée)
         """
+        if extractor is None:
+            extractor = HybridExtractor(use_llm=True, language='fr')
+        
         self.extractor = extractor
-        logger.info(f"{self.agent_name} initialisé")
+        
+        logger.info(
+            f"{self.agent_name} initialisé "
+            f"(langue: {self.extractor.regex.patterns.LANGUAGE_CODE})"
+        )
     
     def process(self, text: str) -> ProcessingResult:
         """

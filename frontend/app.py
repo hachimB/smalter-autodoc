@@ -201,7 +201,7 @@ with st.sidebar:
     **Porte 5** : Extraction Structurée
     - Regex + LLM hybride
     
-    **Porte 6** : Validation Métier
+    **Porte 6** : Validation Technique
     - Champs obligatoires présents
     """)
     
