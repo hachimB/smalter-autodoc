@@ -97,7 +97,7 @@ class ImageQualityChecker:
                 orientation_score * 0.1
             )
             
-            passed = (overall >= self.min_overall) and (resolution_score >= 50.0)
+            passed = (overall >= self.min_overall) and (resolution_score >= 35.0)
             
             logger.info(
                 f"Qualité {image_path.name}: "

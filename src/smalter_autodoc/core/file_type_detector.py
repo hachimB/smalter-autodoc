@@ -73,7 +73,7 @@ class FileTypeDetector:
             logger.error(f"Erreur détection type fichier: {str(e)}")
             return FileType.UNSUPPORTED, {'error': str(e)}
         
-        
+
     
     def _analyze_pdf(self, file_path: str) -> Tuple[FileType, dict]:
         """
@@ -161,7 +161,7 @@ class FileTypeDetector:
                     'height': height,
                     'mode': mode,
                     'format': format_name,
-                    'dpi': img.info.get('dpi', (72, 72))
+                    'dpi': self._serialize_dpi(img.info.get('dpi'))
                 }
                 
                 return FileType.IMAGE_PURE, metadata
@@ -169,3 +169,30 @@ class FileTypeDetector:
         except Exception as e:
             logger.error(f"Erreur analyse image: {str(e)}")
             return FileType.UNSUPPORTED, {'error': str(e)}
+    
+
+
+    def _serialize_dpi(self, dpi_value) -> list:
+        """
+        Convertit DPI en format sérialisable
+        
+        Args:
+            dpi_value: Peut être tuple, IFDRational, ou None
+            
+        Returns:
+            Liste [dpi_x, dpi_y] ou [72, 72] par défaut
+        """
+        if dpi_value is None:
+            return [72, 72]
+        
+        try:
+            # Si tuple de IFDRational ou autres types
+            if isinstance(dpi_value, (tuple, list)):
+                return [float(x) for x in dpi_value[:2]]
+            
+            # Si valeur unique
+            return [float(dpi_value), float(dpi_value)]
+            
+        except (TypeError, ValueError):
+            logger.warning(f"DPI non-sérialisable: {type(dpi_value)}, utilisation valeur par défaut")
+            return [72, 72]
